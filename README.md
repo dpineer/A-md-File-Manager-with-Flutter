@@ -1,7 +1,14 @@
 # doc_searcher
 
-A new Flutter project.
+This project is written by flutter with dart langguage.
+
+The project uses the CC-BY-NC-SA license.
+
+Currently, it has implemented the parsing of line charts, LaTeX formulas, images, and other elements.
 
 ## Getting Started
 
-- Before Starting , Please check pubspec.yaml .
+Before Starting , Please check pubspec.yaml .
+
+if you want run without code ,you can download debug mode apps in the \build\windows\x64\runner
+*you need download all part of that menu to get start.
