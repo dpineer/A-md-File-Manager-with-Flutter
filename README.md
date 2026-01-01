@@ -12,3 +12,8 @@ Before Starting , Please check pubspec.yaml .
 
 if you want run without code ,you can download debug mode apps in the \build\windows\x64\runner
 *you need download all part of that menu to get start.
+
+## Announce
+This project is still under development.
+If you have any questions, please contact me.
+* <EMAIL>dpiner@163.com

@@ -45,3 +45,6 @@ title: 标题
 x.title: X轴标题
 y.title: Y轴标题
 
+### 说明
+
+1. 添加图片时，请将图片放在assets/database/article/目录下，并添加resource:assets/database/article/图片名称

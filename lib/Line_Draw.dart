@@ -87,8 +87,24 @@ class LineChartWidget extends StatelessWidget {
 
   const LineChartWidget({super.key, required this.config});
 
-  @override
   Widget build(BuildContext context) {
+    // 在构建图表之前，先检查数据是否为空
+    if (config.data.isEmpty) {
+      return Container(
+        height: 350,
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.insert_chart, size: 48, color: Colors.grey[400]),
+              SizedBox(height: 16),
+              Text('暂无数据', style: TextStyle(color: Colors.grey[600])),
+            ],
+          ),
+        ),
+      );
+    }
     // 准备折线图数据
     List<LineChartBarData> lineBarsData = [];
     List<String> xLabels = [];

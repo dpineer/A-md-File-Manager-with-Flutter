@@ -5,6 +5,9 @@ import 'package:flutter_markdown_plus_latex/flutter_markdown_plus_latex.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:csv/csv.dart';
 import 'Line_Draw.dart';
+import 'package:dio/dio.dart';
+import 'dart:convert'; // 用于jsonDecode
+import 'dart:async'; // 用于StreamController
 
 void main() {
   runApp(MyApp());
@@ -49,20 +52,35 @@ class _MainPageState extends State<MainPage> {
   final String _appVersion = "0.0.0.dev";
   String _dataVersion = "0";
 
+  final TextEditingController _aiMessageController = TextEditingController();
+  final List<Map<String, dynamic>> _conversationHistory = [];
+  bool _isWaitingForAI = false;
+  String _selectedConversationMode = 'general';
+
+  // 对话模式选项
+  final List<Map<String, String>> _conversationModes = [
+    {'value': 'general', 'label': '通用对话'},
+    {'value': 'technical', 'label': '技术问答'},
+    {'value': 'creative', 'label': '创意写作'},
+    {'value': 'analysis', 'label': '分析推理'},
+  ];
+
+  // 流式响应相关变量
+  StreamController<String> _streamResponseController =
+      StreamController<String>();
+  bool _isStreaming = false;
+  String _currentStreamingResponse = "";
+
   @override
   void initState() {
     super.initState();
-    // 初始加载CSV文件并解析文章列表
     _loadArticleList();
-
-    // 添加搜索监听
     _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
-    _searchController.dispose();
-    _searchFocusNode.dispose();
+    _streamResponseController.close();
     super.dispose();
   }
 
@@ -88,6 +106,550 @@ class _MainPageState extends State<MainPage> {
             author.contains(_searchQuery) ||
             remark.contains(_searchQuery);
       }).toList();
+    }
+  }
+
+  Stream<String> _fetchDifyContentStream(String query) async* {
+    try {
+      final dio = Dio();
+
+      // 设置请求头
+      final headers = {
+        'Authorization': 'Bearer app-4FGPy6OjsydBXkIMLtvVCR7U',
+        'Content-Type': 'application/json',
+      };
+
+      // 构建对话历史
+      final List<Map<String, String>> messages = [];
+
+      // 添加最近的对话历史（限制长度避免token过多）
+      final recentHistory = _conversationHistory.reversed
+          .take(6)
+          .toList()
+          .reversed
+          .toList();
+      for (final msg in recentHistory) {
+        messages.add({
+          'role': msg['role'] == 'user' ? 'user' : 'assistant',
+          'content': msg['content'].toString(),
+        });
+      }
+
+      // 添加当前查询
+      messages.add({'role': 'user', 'content': query});
+
+      final requestBody = {
+        'inputs': {},
+        'query': query,
+        'response_mode': 'streaming', // 修改为流式响应
+        'user': 'flutter_app_user',
+        'messages': messages,
+        'conversation_mode': _selectedConversationMode,
+      };
+
+      final response = await dio.post(
+        'http://192.168.124.3/v1/chat-messages',
+        data: requestBody,
+        options: Options(
+          headers: headers,
+          responseType: ResponseType.stream, // 重要：设置为流式响应
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final ResponseBody responseBody = response.data;
+        final Stream<List<int>> stream = responseBody.stream;
+        String buffer = '';
+
+        await for (final chunk in stream) {
+          final text = utf8.decode(chunk, allowMalformed: true);
+          buffer += text;
+
+          // 解析SSE格式数据[2](@ref)
+          final lines = buffer.split('\n');
+          buffer = lines.last; // 保留最后一行不完整的数据
+
+          for (int i = 0; i < lines.length - 1; i++) {
+            final line = lines[i].trim();
+            if (line.startsWith('data: ')) {
+              final jsonStr = line.substring(6);
+              if (jsonStr == '[DONE]') {
+                return;
+              }
+
+              try {
+                final map = jsonDecode(jsonStr) as Map<String, dynamic>;
+                // 根据Dify API流式响应格式提取文本
+                final answer = map['answer'] as String?;
+                if (answer != null && answer.isNotEmpty) {
+                  yield answer;
+                }
+              } catch (e) {
+                print('JSON解析错误: $e');
+              }
+            }
+          }
+        }
+      } else {
+        throw Exception('Dify请求失败: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('访问Dify知识库失败: $e');
+    }
+  }
+
+  Widget _buildAIChatInterface() {
+    return Column(
+      children: [
+        // 对话模式选择器
+        Container(
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+          ),
+          child: Row(
+            children: [
+              Text(
+                '对话模式:',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(width: 8),
+              DropdownButton<String>(
+                value: _selectedConversationMode,
+                icon: Icon(Icons.arrow_drop_down, size: 20),
+                elevation: 16,
+                style: TextStyle(fontSize: 14, color: Colors.black),
+                underline: Container(height: 0),
+                onChanged: (String? newValue) {
+                  setState(() {
+                    _selectedConversationMode = newValue!;
+                  });
+                },
+                items: _conversationModes.map<DropdownMenuItem<String>>((
+                  Map<String, String> mode,
+                ) {
+                  return DropdownMenuItem<String>(
+                    value: mode['value'],
+                    child: Text(mode['label']!),
+                  );
+                }).toList(),
+              ),
+              Spacer(),
+              IconButton(
+                icon: Icon(Icons.refresh, size: 18),
+                onPressed: () {
+                  setState(() {
+                    _conversationHistory.clear();
+                    _conversationHistory.add({
+                      'role': 'assistant',
+                      'content': '对话已重置，请问有什么可以帮助您的？',
+                      'timestamp': DateTime.now(),
+                    });
+                  });
+                },
+                tooltip: '重置对话',
+              ),
+            ],
+          ),
+        ),
+
+        // 对话历史区域
+        Expanded(
+          child: _conversationHistory.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.chat_bubble_outline,
+                        size: 48,
+                        color: Colors.grey[400],
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        '开始与AI对话',
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: EdgeInsets.all(12),
+                  itemCount: _conversationHistory.length,
+                  itemBuilder: (context, index) {
+                    final message = _conversationHistory[index];
+                    return _buildMessageBubble(message);
+                  },
+                ),
+        ),
+
+        // 输入区域
+        Container(
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Colors.grey[300]!)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _aiMessageController,
+                  maxLines: 3,
+                  minLines: 1,
+                  decoration: InputDecoration(
+                    hintText: '输入您的问题...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide(color: Colors.grey[400]!),
+                    ),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  onSubmitted: (_) => _sendMessageToAI(),
+                ),
+              ),
+              SizedBox(width: 8),
+              _isWaitingForAI
+                  ? Padding(
+                      padding: EdgeInsets.all(8),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : IconButton(
+                      icon: Icon(Icons.send, color: Colors.blue),
+                      onPressed: _sendMessageToAI,
+                      tooltip: '发送消息',
+                    ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // 新增：构建消息气泡
+  Widget _buildMessageBubble(Map<String, dynamic> message) {
+    final bool isUser = message['role'] == 'user';
+    final bool isStreaming = message['isStreaming'] == true;
+    final String content = message['content'].toString();
+
+    return Container(
+      margin: EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: isUser
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        children: [
+          if (!isUser)
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: Colors.blue[100],
+              child: Icon(Icons.smart_toy, size: 16, color: Colors.blue[600]),
+            ),
+          Flexible(
+            child: Container(
+              margin: EdgeInsets.symmetric(horizontal: 8),
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isUser ? Colors.blue[50] : Colors.grey[100],
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isUser ? Colors.blue[200]! : Colors.grey[300]!,
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (isUser)
+                    Text(
+                      content,
+                      style: TextStyle(fontSize: 14, color: Colors.grey[800]),
+                    )
+                  else
+                    _buildAIResponse(content, isStreaming),
+                  if (isStreaming) ...[
+                    SizedBox(height: 4),
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'AI正在思考...',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  SizedBox(height: 4),
+                  Text(
+                    _formatTimestamp(message['timestamp'] as DateTime),
+                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isUser)
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: Colors.green[100],
+              child: Icon(Icons.person, size: 16, color: Colors.green[600]),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // 新增：构建AI响应内容，处理图表标记
+  Widget _buildAIResponse(String content, bool isStreaming) {
+    // 检查是否包含图表标记
+    final hasChartTag = content.contains('<chart>');
+
+    if (!hasChartTag) {
+      // 没有图表标记，直接渲染Markdown
+      return _buildMarkdownContent(content, isStreaming);
+    }
+
+    // 分割图表标记之前和之后的内容
+    final parts = content.split('<chart>');
+    final beforeChart = parts[0];
+    final afterChart = parts.length > 1 ? parts[1] : '';
+
+    // 检查图表数据是否完整（包含结束标记）
+    final isChartComplete = afterChart.contains('</chart>');
+    final chartParts = afterChart.split('</chart>');
+    final chartContent = chartParts.length > 1 ? chartParts[0] : '';
+    final afterChartContent = chartParts.length > 1 ? chartParts[1] : '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 图表标记之前的内容 - 浅色处理
+        if (beforeChart.isNotEmpty)
+          Opacity(
+            opacity: 0.7,
+            child: _buildMarkdownContent(beforeChart, isStreaming),
+          ),
+
+        // 图表内容（只有完整时才渲染）
+        if (isChartComplete && chartContent.isNotEmpty) ...[
+          SizedBox(height: 16), // 自动换行
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: _buildChartContent(chartContent),
+          ),
+        ] else if (chartContent.isNotEmpty) ...[
+          // 图表数据不完整时显示加载状态
+          SizedBox(height: 16),
+          Container(
+            padding: EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.orange[300]!),
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.orange[50],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 8),
+                Text(
+                  '图表数据加载中...',
+                  style: TextStyle(fontSize: 12, color: Colors.orange[800]),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        // 图表之后的内容
+        if (afterChartContent.isNotEmpty)
+          _buildMarkdownContent(afterChartContent, isStreaming),
+      ],
+    );
+  }
+
+  // 新增：构建图表内容
+  Widget _buildChartContent(String chartContent) {
+    try {
+      // 将图表内容包装成代码块格式，以便ChartElementBuilder解析
+      final wrappedContent = '```chart\n$chartContent\n```';
+
+      return Markdown(
+        data: wrappedContent,
+        shrinkWrap: true,
+        physics: NeverScrollableScrollPhysics(),
+        builders: {
+          'latex': LatexElementBuilder(
+            textStyle: const TextStyle(fontWeight: FontWeight.w100),
+            textScaleFactor: 1.2,
+          ),
+          'code': ChartElementBuilder(),
+        },
+        extensionSet: md.ExtensionSet(
+          [...md.ExtensionSet.gitHubFlavored.blockSyntaxes, LatexBlockSyntax()],
+          [
+            ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+            LatexInlineSyntax(),
+          ],
+        ),
+      );
+    } catch (e) {
+      return Container(
+        padding: EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.red[300]!),
+          borderRadius: BorderRadius.circular(8),
+          color: Colors.red[50],
+        ),
+        child: Text(
+          '图表渲染错误: $e',
+          style: TextStyle(fontSize: 12, color: Colors.red[800]),
+        ),
+      );
+    }
+  }
+
+  // 新增：构建Markdown内容（重构原有逻辑）
+  Widget _buildMarkdownContent(String content, bool isStreaming) {
+    return Markdown(
+      data: content.isEmpty ? "正在检索知识库..." : content,
+      shrinkWrap: true,
+      physics: NeverScrollableScrollPhysics(),
+      builders: {
+        'latex': LatexElementBuilder(
+          textStyle: const TextStyle(fontWeight: FontWeight.w100),
+          textScaleFactor: 1.2,
+        ),
+        'code': ChartElementBuilder(),
+      },
+      extensionSet: md.ExtensionSet(
+        [...md.ExtensionSet.gitHubFlavored.blockSyntaxes, LatexBlockSyntax()],
+        [...md.ExtensionSet.gitHubFlavored.inlineSyntaxes, LatexInlineSyntax()],
+      ),
+    );
+  }
+
+  // 修改_sendMessageToAI方法，确保图表标记正确处理
+  Future<void> _sendMessageToAI() async {
+    final String message = _aiMessageController.text.trim();
+    if (message.isEmpty || _isWaitingForAI) return;
+
+    try {
+      setState(() {
+        _isWaitingForAI = true;
+        _isStreaming = true;
+        _conversationHistory.add({
+          'role': 'user',
+          'content': message,
+          'timestamp': DateTime.now(),
+        });
+        _conversationHistory.add({
+          'role': 'assistant',
+          'content': '',
+          'timestamp': DateTime.now(),
+          'isStreaming': true,
+        });
+        _aiMessageController.clear();
+      });
+
+      final stream = _fetchDifyContentStream(message);
+      String fullResponse = '';
+
+      await for (final chunk in stream) {
+        setState(() {
+          fullResponse += chunk;
+          _conversationHistory.last['content'] = fullResponse;
+        });
+      }
+
+      setState(() {
+        _conversationHistory.last['isStreaming'] = false;
+        _isWaitingForAI = false;
+        _isStreaming = false;
+      });
+    } catch (e) {
+      setState(() {
+        _conversationHistory.last['content'] = '抱歉，发生错误：$e';
+        _conversationHistory.last['isStreaming'] = false;
+        _isWaitingForAI = false;
+        _isStreaming = false;
+      });
+    }
+  }
+
+  // 新增：格式化时间戳
+  String _formatTimestamp(DateTime timestamp) {
+    return '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+  }
+
+  // 加载文章内容
+  Future<void> _loadArticleContent(Map<String, String> article) async {
+    try {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+
+      final String? filePath = article['filePath'];
+      final String? extensionUrl = article['extensionUrl'];
+      final String? title = article['title'];
+
+      String content;
+
+      if (extensionUrl != null && extensionUrl.isNotEmpty) {
+        // 如果是AI文章，显示对话界面而不是直接调用API
+        content = '# AI对话模式\n\n欢迎与AI助手对话，请在下方输入您的问题。';
+        // 清空对话历史
+        _conversationHistory.clear();
+        // 添加欢迎消息
+        _conversationHistory.add({
+          'role': 'assistant',
+          'content': '您好！我是AI助手，很高兴为您服务。请问有什么可以帮助您的？',
+          'timestamp': DateTime.now(),
+        });
+      } else if (filePath != null && filePath.isNotEmpty) {
+        // 从本地Markdown文件加载内容
+        content = await rootBundle.loadString(filePath);
+      } else {
+        throw Exception('文章没有可用的内容源');
+      }
+
+      setState(() {
+        _markdownContent = content;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _markdownContent = '# 加载失败\n\n无法加载文章内容: $e';
+        _isLoading = false;
+        _errorMessage = e.toString();
+      });
     }
   }
 
@@ -119,7 +681,11 @@ class _MainPageState extends State<MainPage> {
             'author': row[1].toString(),
             'version': row[2].toString(),
             'filePath': row[3].toString(),
-            'remark': row.length > 5 ? row[5].toString() : '', // 备注作为标签
+            'extensionUrl': row.length > 4
+                ? row[4].toString()
+                : '', // 新增：拓展内容地址
+            'remark': row.length > 5 ? row[5].toString() : '',
+            'tags': row.length > 6 ? row[6].toString() : '',
           });
         }
       }
@@ -137,7 +703,7 @@ class _MainPageState extends State<MainPage> {
 
       // 加载第一篇文章
       if (_articleList.isNotEmpty) {
-        _loadMarkdownFile(_articleList.first['filePath']!);
+        await _loadArticleContent(_articleList.first); // 修改为新的加载方法
       }
     } catch (e) {
       setState(() {
@@ -174,12 +740,23 @@ class _MainPageState extends State<MainPage> {
   }
 
   // 处理文章点击事件
-  void _onArticleTap(String articleTitle, String filePath) {
-    setState(() {
-      _currentArticleTitle = articleTitle;
-      _currentArticleFilePath = filePath;
-    });
-    _loadMarkdownFile(filePath);
+  void _onArticleTap(
+    String articleTitle,
+    String filePath,
+    String extensionUrl,
+  ) {
+    final article = _articleList.firstWhere(
+      (article) => article['title'] == articleTitle,
+      orElse: () => {},
+    );
+
+    if (article.isNotEmpty) {
+      setState(() {
+        _currentArticleTitle = articleTitle;
+        _currentArticleFilePath = filePath;
+      });
+      _loadArticleContent(article);
+    }
   }
 
   // 显示设置弹窗
@@ -354,6 +931,16 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
+  // 新增：判断是否为AI文章的方法
+  bool _isAIArticle() {
+    final currentArticle = _articleList.firstWhere(
+      (article) => article['title'] == _currentArticleTitle,
+      orElse: () => {},
+    );
+    final extensionUrl = currentArticle['extensionUrl'] ?? '';
+    return extensionUrl.isNotEmpty;
+  }
+
   void _fetchUpdates() async {
     Navigator.of(context).pop(); // 关闭弹窗
     ScaffoldMessenger.of(context).showSnackBar(
@@ -478,7 +1065,8 @@ class _MainPageState extends State<MainPage> {
                               article['title']!,
                               article['author']!,
                               article['filePath']!,
-                              article['remark'] ?? '', // 传递备注作为标签
+                              article['remark'] ?? '',
+                              article['extensionUrl'] ?? '', // 新增参数
                             );
                           },
                         ),
@@ -523,6 +1111,8 @@ class _MainPageState extends State<MainPage> {
           Expanded(
             child: _isLoading && _markdownContent == '# 加载中...'
                 ? Center(child: CircularProgressIndicator())
+                : _isAIArticle() // 判断是否为AI文章
+                ? _buildAIChatInterface() // 显示AI对话界面
                 : Markdown(
                     selectable: true,
                     data: _markdownContent,
@@ -557,17 +1147,18 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  // 构建文章按钮 - 显示文章名称、作者和标签
   Widget _buildArticleButton(
     String title,
     String author,
     String filePath,
     String remark,
+    String extensionUrl, // 新增参数
   ) {
     bool isSelected = _currentArticleTitle == title;
+    bool isDifyArticle = extensionUrl.isNotEmpty;
 
     return GestureDetector(
-      onTap: () => _onArticleTap(title, filePath),
+      onTap: () => _onArticleTap(title, filePath, extensionUrl),
       child: Container(
         width: double.infinity,
         margin: EdgeInsets.only(bottom: 12),
@@ -579,20 +1170,55 @@ class _MainPageState extends State<MainPage> {
             color: isSelected ? Colors.blue : Colors.grey[300]!,
             width: isSelected ? 2 : 1,
           ),
+          boxShadow: [
+            if (isSelected)
+              BoxShadow(
+                color: Colors.blue.withOpacity(0.2),
+                blurRadius: 4,
+                offset: Offset(0, 2),
+              ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 文章标题
-            Text(
-              title,
-              style: TextStyle(
-                color: isSelected ? Colors.blue[700] : Colors.grey[800],
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                fontSize: 14,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            // 文章标题和Dify标识
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      color: isSelected ? Colors.blue[700] : Colors.grey[800],
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (isDifyArticle) ...[
+                  SizedBox(width: 4),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.green[50],
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.green, width: 1),
+                    ),
+                    child: Text(
+                      'Dify',
+                      style: TextStyle(
+                        color: Colors.green[700],
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
             SizedBox(height: 4),
             // 作者信息
@@ -616,6 +1242,18 @@ class _MainPageState extends State<MainPage> {
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            // Dify内容提示
+            if (isDifyArticle) ...[
+              SizedBox(height: 4),
+              Text(
+                '来源: Dify知识库',
+                style: TextStyle(
+                  color: Colors.green[600],
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ],

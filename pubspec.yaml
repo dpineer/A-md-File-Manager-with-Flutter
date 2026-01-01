@@ -48,6 +48,7 @@ dependencies:
   fl_chart: ^1.1.1
   open_file_plus: ^3.4.1+1
   permission_handler: ^12.0.1
+  dio: ^5.9.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -72,6 +73,7 @@ flutter:
   
   assets:
     - assets/
+    - assets/readtemp/
     - assets/database/article/
   #设置数据库路径，设置markdown文件路径
 
