@@ -123,9 +123,14 @@ class _MainPageState extends State<MainPage> {
       final extensionUrl = currentArticle['extensionUrl'] ?? '';
       final config = _parseDifyConfigFromUrl(extensionUrl);
 
-      final String apiKey = config['apiKey'] ?? 'app-4FGPy6OjsydBXkIMLtvVCR7U';
-      final String baseUrl = config['baseUrl'] ?? 'http://192.168.124.3';
-      final String endpoint = config['endpoint'] ?? '/v1/chat-messages';
+      // 完全移除硬编码，如果配置解析失败则抛出明确错误
+      if (config.isEmpty) {
+        throw Exception('无法从文章配置中获取Dify API设置，请检查CSV文件中的拓展内容地址格式');
+      }
+
+      final String apiKey = config['apiKey']!;
+      final String baseUrl = config['baseUrl']!;
+      final String endpoint = config['endpoint']!;
 
       // 设置请求头
       final headers = {
