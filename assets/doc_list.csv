@@ -1,4 +1,4 @@
 文章名称,作者,版本号,md文件地址（使用/而非\）,拓展内容地址,备注,标签
 Markdown文件范例,dpiner,1,assets/database/article/test.md,,范例,
 Emoji,dpiner,1,assets/database/article/testK.md,,测试文件,
-Dify知识库AI测试,dpiner,2,app-4FGPy6OjsydBXkIMLtvVCR7U,http://192.168.124.3/v1,测试文件,Dify知识库AI测试
+Dify知识库AI测试,dpiner,2,DIFY知识库,http://192.168.124.3/v1/chat-messages#app-4FGPy6OjsydBXkIMLtvVCR7U,测试文件,Dify知识库AI测试

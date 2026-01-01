@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Markdown阅读器',
+      title: 'markdown和知识库',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
@@ -113,9 +113,23 @@ class _MainPageState extends State<MainPage> {
     try {
       final dio = Dio();
 
+      // 从当前文章获取Dify配置信息
+      final currentArticle = _articleList.firstWhere(
+        (article) => article['title'] == _currentArticleTitle,
+        orElse: () => {},
+      );
+
+      // 从CSV的拓展内容地址字段解析Dify配置
+      final extensionUrl = currentArticle['extensionUrl'] ?? '';
+      final config = _parseDifyConfigFromUrl(extensionUrl);
+
+      final String apiKey = config['apiKey'] ?? 'app-4FGPy6OjsydBXkIMLtvVCR7U';
+      final String baseUrl = config['baseUrl'] ?? 'http://192.168.124.3';
+      final String endpoint = config['endpoint'] ?? '/v1/chat-messages';
+
       // 设置请求头
       final headers = {
-        'Authorization': 'Bearer app-4FGPy6OjsydBXkIMLtvVCR7U',
+        'Authorization': 'Bearer $apiKey',
         'Content-Type': 'application/json',
       };
 
@@ -141,18 +155,18 @@ class _MainPageState extends State<MainPage> {
       final requestBody = {
         'inputs': {},
         'query': query,
-        'response_mode': 'streaming', // 修改为流式响应
+        'response_mode': 'streaming',
         'user': 'flutter_app_user',
         'messages': messages,
         'conversation_mode': _selectedConversationMode,
       };
 
       final response = await dio.post(
-        'http://192.168.124.3/v1/chat-messages',
+        '$baseUrl$endpoint',
         data: requestBody,
         options: Options(
           headers: headers,
-          responseType: ResponseType.stream, // 重要：设置为流式响应
+          responseType: ResponseType.stream,
           sendTimeout: const Duration(seconds: 30),
           receiveTimeout: const Duration(seconds: 30),
         ),
@@ -161,33 +175,67 @@ class _MainPageState extends State<MainPage> {
       if (response.statusCode == 200) {
         final ResponseBody responseBody = response.data;
         final Stream<List<int>> stream = responseBody.stream;
-        String buffer = '';
+        final StringBuffer buffer = StringBuffer();
 
         await for (final chunk in stream) {
-          final text = utf8.decode(chunk, allowMalformed: true);
-          buffer += text;
+          final String text = utf8.decode(chunk, allowMalformed: true);
+          buffer.write(text);
 
-          // 解析SSE格式数据[2](@ref)
-          final lines = buffer.split('\n');
-          buffer = lines.last; // 保留最后一行不完整的数据
+          final String bufferContent = buffer.toString();
+          final List<String> lines = bufferContent.split('\n');
 
-          for (int i = 0; i < lines.length - 1; i++) {
-            final line = lines[i].trim();
-            if (line.startsWith('data: ')) {
-              final jsonStr = line.substring(6);
+          // 清空缓冲区并保留最后一行（可能不完整）
+          buffer.clear();
+          if (lines.isNotEmpty && !bufferContent.endsWith('\n')) {
+            buffer.write(lines.last);
+            lines.removeLast();
+          }
+
+          for (final line in lines) {
+            final String trimmedLine = line.trim();
+            if (trimmedLine.isEmpty) continue;
+
+            if (trimmedLine.startsWith('data: ')) {
+              final String jsonStr = trimmedLine.substring(6);
+
               if (jsonStr == '[DONE]') {
                 return;
               }
 
+              if (jsonStr.isNotEmpty) {
+                try {
+                  final Map<String, dynamic> map =
+                      jsonDecode(jsonStr) as Map<String, dynamic>;
+                  final String? answer = map['answer'] as String?;
+
+                  if (answer != null && answer.isNotEmpty) {
+                    yield answer;
+                  }
+                } catch (e) {
+                  print('JSON解析错误，跳过该行数据: $e');
+                  continue;
+                }
+              }
+            }
+          }
+        }
+
+        // 处理缓冲区中剩余的数据
+        final String remaining = buffer.toString();
+        if (remaining.isNotEmpty) {
+          final String trimmed = remaining.trim();
+          if (trimmed.startsWith('data: ')) {
+            final String jsonStr = trimmed.substring(6);
+            if (jsonStr != '[DONE]' && jsonStr.isNotEmpty) {
               try {
-                final map = jsonDecode(jsonStr) as Map<String, dynamic>;
-                // 根据Dify API流式响应格式提取文本
-                final answer = map['answer'] as String?;
+                final Map<String, dynamic> map =
+                    jsonDecode(jsonStr) as Map<String, dynamic>;
+                final String? answer = map['answer'] as String?;
                 if (answer != null && answer.isNotEmpty) {
                   yield answer;
                 }
               } catch (e) {
-                print('JSON解析错误: $e');
+                print('尾部数据解析错误: $e');
               }
             }
           }
@@ -196,7 +244,28 @@ class _MainPageState extends State<MainPage> {
         throw Exception('Dify请求失败: ${response.statusCode}');
       }
     } catch (e) {
-      throw Exception('访问Dify知识库失败: $e');
+      throw Exception('访问Dify后端失败: $e');
+    }
+  }
+
+  // 新增方法：从URL解析Dify配置信息
+  Map<String, String> _parseDifyConfigFromUrl(String extensionUrl) {
+    if (extensionUrl.isEmpty) {
+      return {};
+    }
+
+    try {
+      // 假设URL格式为：http://192.168.124.3/v1#app-4FGPy6OjsydBXkIMLtvVCR7U
+      final uri = Uri.parse(extensionUrl);
+      final baseUrl =
+          '${uri.scheme}://${uri.host}${uri.port != 80 ? ':${uri.port}' : ''}';
+      final endpoint = uri.path;
+      final apiKey = uri.fragment; // 从fragment中获取API Key
+
+      return {'baseUrl': baseUrl, 'endpoint': endpoint, 'apiKey': apiKey};
+    } catch (e) {
+      print('解析Dify配置失败: $e');
+      return {};
     }
   }
 
@@ -681,9 +750,7 @@ class _MainPageState extends State<MainPage> {
             'author': row[1].toString(),
             'version': row[2].toString(),
             'filePath': row[3].toString(),
-            'extensionUrl': row.length > 4
-                ? row[4].toString()
-                : '', // 新增：拓展内容地址
+            'extensionUrl': row.length > 4 ? row[4].toString() : '',
             'remark': row.length > 5 ? row[5].toString() : '',
             'tags': row.length > 6 ? row[6].toString() : '',
           });
@@ -693,6 +760,7 @@ class _MainPageState extends State<MainPage> {
       setState(() {
         _articleList = articles;
         _filteredArticleList = List.from(articles);
+        // 更新数据版本为文章数量
         _dataVersion = articles.length.toString();
         if (_articleList.isNotEmpty) {
           _currentArticleTitle = _articleList.first['title']!;
@@ -703,7 +771,7 @@ class _MainPageState extends State<MainPage> {
 
       // 加载第一篇文章
       if (_articleList.isNotEmpty) {
-        await _loadArticleContent(_articleList.first); // 修改为新的加载方法
+        await _loadArticleContent(_articleList.first);
       }
     } catch (e) {
       setState(() {
@@ -1111,7 +1179,7 @@ class _MainPageState extends State<MainPage> {
           Expanded(
             child: _isLoading && _markdownContent == '# 加载中...'
                 ? Center(child: CircularProgressIndicator())
-                : _isAIArticle() // 判断是否为AI文章
+                : _isAIArticle() // 判断是否为AI选项卡
                 ? _buildAIChatInterface() // 显示AI对话界面
                 : Markdown(
                     selectable: true,
