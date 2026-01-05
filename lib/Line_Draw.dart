@@ -217,6 +217,11 @@ class LineChartWidget extends StatelessWidget {
       Colors.orange,
       Colors.purple,
       Colors.red,
+      Colors.teal,
+      Colors.brown,
+      Colors.cyan,
+      Colors.indigo,
+      Colors.lime,
     ];
     return colors[index % colors.length];
   }

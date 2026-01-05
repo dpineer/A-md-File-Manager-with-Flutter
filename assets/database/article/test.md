@@ -53,7 +53,7 @@ title: Monthly Revenue
 x.title: Amount
 y.title: Month
 ```
-
+✌
 
 ```chart
 Budget,Income,Expenses,Debt

@@ -697,21 +697,26 @@ class _MainPageState extends State<MainPage> {
       String content;
 
       if (extensionUrl != null && extensionUrl.isNotEmpty) {
-        // 如果是AI文章，显示对话界面而不是直接调用API
+        // 如果是AI文章
         content = '# AI对话模式\n\n欢迎与AI助手对话，请在下方输入您的问题。';
-        // 清空对话历史
         _conversationHistory.clear();
-        // 添加欢迎消息
         _conversationHistory.add({
           'role': 'assistant',
           'content': '您好！我是AI助手，很高兴为您服务。请问有什么可以帮助您的？',
           'timestamp': DateTime.now(),
         });
       } else if (filePath != null && filePath.isNotEmpty) {
-        // 从本地Markdown文件加载内容
-        content = await rootBundle.loadString(filePath);
+        try {
+          // 从本地Markdown文件加载内容
+          content = await rootBundle.loadString(filePath);
+        } catch (e) {
+          // 如果文件加载失败，显示错误信息
+          content = '# 文件加载失败\n\n无法加载文件: $filePath\n错误: $e';
+          _errorMessage = '文件加载失败: $filePath';
+        }
       } else {
-        throw Exception('文章没有可用的内容源');
+        // 如果没有文件路径，显示空内容
+        content = '# 无内容\n\n这篇文章没有可用的内容。';
       }
 
       setState(() {
@@ -735,7 +740,7 @@ class _MainPageState extends State<MainPage> {
         _errorMessage = null;
       });
 
-      // 加载CSV文件
+      // 加载CSV文件 - 添加路径验证
       final String csvContent = await rootBundle.loadString(
         'assets/doc_list.csv',
       );
@@ -750,14 +755,42 @@ class _MainPageState extends State<MainPage> {
       for (int i = 1; i < csvTable.length; i++) {
         final row = csvTable[i];
         if (row.length >= 4) {
+          // 清理文件路径，确保没有多余的空格或换行
+          String filePath = row[3].toString().trim();
+
+          // 如果是"DIFY知识库"（AI文章），不需要文件路径
+          if (filePath == 'DIFY知识库' || filePath.isEmpty) {
+            filePath = '';
+          } else {
+            // 确保路径以assets/开头，并且是有效的相对路径
+            if (!filePath.startsWith('assets/')) {
+              // 如果路径是绝对路径，转换为相对路径
+              if (filePath.contains('home') || filePath.startsWith('/')) {
+                // 这是绝对路径，需要转换为相对路径
+                // 在Linux中，通常从项目根目录开始
+                if (filePath.contains('assets/')) {
+                  // 提取assets之后的部分
+                  final startIndex = filePath.indexOf('assets/');
+                  filePath = filePath.substring(startIndex);
+                } else {
+                  // 如果无法转换，设置为空
+                  filePath = '';
+                }
+              } else {
+                // 确保路径以assets/开头
+                filePath = 'assets/$filePath';
+              }
+            }
+          }
+
           articles.add({
-            'title': row[0].toString(),
-            'author': row[1].toString(),
-            'version': row[2].toString(),
-            'filePath': row[3].toString(),
-            'extensionUrl': row.length > 4 ? row[4].toString() : '',
-            'remark': row.length > 5 ? row[5].toString() : '',
-            'tags': row.length > 6 ? row[6].toString() : '',
+            'title': row[0].toString().trim(),
+            'author': row[1].toString().trim(),
+            'version': row[2].toString().trim(),
+            'filePath': filePath, // 使用清理后的路径
+            'extensionUrl': row.length > 4 ? row[4].toString().trim() : '',
+            'remark': row.length > 5 ? row[5].toString().trim() : '',
+            'tags': row.length > 6 ? row[6].toString().trim() : '',
           });
         }
       }
@@ -765,7 +798,6 @@ class _MainPageState extends State<MainPage> {
       setState(() {
         _articleList = articles;
         _filteredArticleList = List.from(articles);
-        // 更新数据版本为文章数量
         _dataVersion = articles.length.toString();
         if (_articleList.isNotEmpty) {
           _currentArticleTitle = _articleList.first['title']!;
