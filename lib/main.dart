@@ -740,15 +740,21 @@ class _MainPageState extends State<MainPage> {
         _errorMessage = null;
       });
 
+      print('开始加载文章列表...'); // 添加Log输出
+
       // 加载CSV文件 - 添加路径验证
       final String csvContent = await rootBundle.loadString(
         'assets/doc_list.csv',
       );
 
+      print('CSV文件加载成功，内容长度: ${csvContent.length}'); // 添加Log输出
+
       // 解析CSV内容
       final List<List<dynamic>> csvTable = const CsvToListConverter().convert(
         csvContent,
       );
+
+      print('CSV解析完成，共${csvTable.length}行数据'); // 添加Log输出
 
       // 跳过标题行，将数据转换为Map列表
       final List<Map<String, String>> articles = [];
@@ -783,7 +789,7 @@ class _MainPageState extends State<MainPage> {
             }
           }
 
-          articles.add({
+          final article = {
             'title': row[0].toString().trim(),
             'author': row[1].toString().trim(),
             'version': row[2].toString().trim(),
@@ -791,9 +797,16 @@ class _MainPageState extends State<MainPage> {
             'extensionUrl': row.length > 4 ? row[4].toString().trim() : '',
             'remark': row.length > 5 ? row[5].toString().trim() : '',
             'tags': row.length > 6 ? row[6].toString().trim() : '',
-          });
+          };
+
+          articles.add(article);
+          print(
+            '解析文章: ${article['title']} - 作者: ${article['author']} - 路径: ${article['filePath']}',
+          ); // 添加Log输出
         }
       }
+
+      print('文章列表解析完成，共${articles.length}篇文章'); // 添加Log输出
 
       setState(() {
         _articleList = articles;
@@ -806,11 +819,14 @@ class _MainPageState extends State<MainPage> {
         _isLoading = false;
       });
 
+      print('文章列表更新完成，当前选中文章: $_currentArticleTitle'); // 添加Log输出
+
       // 加载第一篇文章
       if (_articleList.isNotEmpty) {
         await _loadArticleContent(_articleList.first);
       }
     } catch (e) {
+      print('加载文章列表失败: $e'); // 添加Log输出
       setState(() {
         _markdownContent = '# 加载失败\n\n无法加载文章列表: $e';
         _isLoading = false;
