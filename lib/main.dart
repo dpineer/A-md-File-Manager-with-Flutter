@@ -40,8 +40,8 @@ class _MainPageState extends State<MainPage> {
   // 用于存储从CSV解析的文章列表
   List<Map<String, String>> _articleList = [];
   List<Map<String, String>> _filteredArticleList = [];
-  late String _currentArticleTitle;
-  late String _currentArticleFilePath;
+  String _currentArticleTitle = ''; // 去掉late，直接初始化
+  String _currentArticleFilePath = '';
 
   // 搜索相关
   final TextEditingController _searchController = TextEditingController();
@@ -740,26 +740,54 @@ class _MainPageState extends State<MainPage> {
         _errorMessage = null;
       });
 
-      print('开始加载文章列表...'); // 添加Log输出
+      print('开始加载文章列表...');
 
-      // 加载CSV文件 - 添加路径验证
+      // 加载CSV文件
       final String csvContent = await rootBundle.loadString(
         'assets/doc_list.csv',
       );
 
-      print('CSV文件加载成功，内容长度: ${csvContent.length}'); // 添加Log输出
+      print('CSV文件加载成功，内容长度: ${csvContent.length}');
 
-      // 解析CSV内容
+      // --- 新增：CSV内容预处理 ---
+      // 1. 替换Windows换行符为Linux换行符
+      String processedContent = csvContent.replaceAll('\r\n', '\n');
+
+      // 2. 移除UTF-8 BOM（如果存在）
+      if (processedContent.startsWith('\uFEFF')) {
+        processedContent = processedContent.substring(1);
+        print('已移除UTF-8 BOM标记');
+      }
+
+      // 3. 按行分割以便调试
+      final lines = processedContent.split('\n');
+      print('按行分割，共${lines.length}行');
+
+      // 打印前几行查看格式
+      for (int i = 0; i < lines.length && i < 5; i++) {
+        print('行$i: "${lines[i]}" (长度: ${lines[i].length})');
+      }
+      // --- 预处理结束 ---
+
+      // 使用处理后的内容解析CSV
+      print('开始解析处理后的CSV内容，长度: ${processedContent.length}');
       final List<List<dynamic>> csvTable = const CsvToListConverter().convert(
-        csvContent,
+        processedContent,
       );
 
-      print('CSV解析完成，共${csvTable.length}行数据'); // 添加Log输出
+      print('CSV解析完成，共${csvTable.length}行数据');
+
+      // 检查标题行
+      if (csvTable.isNotEmpty) {
+        print('标题行: $csvTable[0] (列数: ${csvTable[0].length})');
+      }
 
       // 跳过标题行，将数据转换为Map列表
       final List<Map<String, String>> articles = [];
       for (int i = 1; i < csvTable.length; i++) {
         final row = csvTable[i];
+        print('解析第$i行: $row (列数: ${row.length})');
+
         if (row.length >= 4) {
           // 清理文件路径，确保没有多余的空格或换行
           String filePath = row[3].toString().trim();
@@ -800,33 +828,93 @@ class _MainPageState extends State<MainPage> {
           };
 
           articles.add(article);
-          print(
-            '解析文章: ${article['title']} - 作者: ${article['author']} - 路径: ${article['filePath']}',
-          ); // 添加Log输出
+          print('成功解析文章: ${article['title']}');
+        } else if (row.isNotEmpty) {
+          // 打印不完整行的详细信息
+          print('警告: 第$i行数据不完整，跳过该行。行数据: $row');
+          print('行内容: ${row.map((cell) => '[$cell]').join(', ')}');
+          print('行原始内容: ${lines[i]}');
         }
       }
 
-      print('文章列表解析完成，共${articles.length}篇文章'); // 添加Log输出
+      print('文章列表解析完成，共${articles.length}篇文章');
+
+      // 如果没有解析到任何文章，尝试手动解析
+      if (articles.isEmpty && csvTable.length > 1) {
+        print('尝试手动解析CSV数据...');
+        for (int i = 1; i < csvTable.length; i++) {
+          final row = csvTable[i];
+          if (row.isNotEmpty) {
+            // 尝试从行字符串中提取字段
+            final String rawLine = lines.length > i ? lines[i] : '';
+            if (rawLine.isNotEmpty) {
+              // 使用逗号分割，但注意处理引号内的逗号
+              final matches = RegExp(
+                r'(?:[^,"]+|"[^"]*")+',
+              ).allMatches(rawLine);
+              final List<String> fields = matches
+                  .map((m) => m.group(0)!.trim())
+                  .toList();
+
+              if (fields.length >= 4) {
+                print('手动解析第$i行成功，字段: $fields');
+
+                String filePath = fields[3];
+                if (filePath == 'DIFY知识库' || filePath.isEmpty) {
+                  filePath = '';
+                } else if (!filePath.startsWith('assets/')) {
+                  filePath = 'assets/$filePath';
+                }
+
+                articles.add({
+                  'title': fields[0],
+                  'author': fields[1],
+                  'version': fields[2],
+                  'filePath': filePath,
+                  'extensionUrl': fields.length > 4 ? fields[4] : '',
+                  'remark': fields.length > 5 ? fields[5] : '',
+                  'tags': fields.length > 6 ? fields[6] : '',
+                });
+              }
+            }
+          }
+        }
+        print('手动解析后，共${articles.length}篇文章');
+      }
 
       setState(() {
         _articleList = articles;
         _filteredArticleList = List.from(articles);
         _dataVersion = articles.length.toString();
+
         if (_articleList.isNotEmpty) {
           _currentArticleTitle = _articleList.first['title']!;
           _currentArticleFilePath = _articleList.first['filePath']!;
+          print('文章列表更新完成，当前选中文章: $_currentArticleTitle');
+        } else {
+          // 设置默认文章
+          _currentArticleTitle = '无可用文章';
+          _currentArticleFilePath = '';
+          _markdownContent =
+              '# 无可用文章\n\n未找到任何可用的文章。\n\nCSV文件内容长度: ${csvContent.length}\n处理后长度: ${processedContent.length}\n解析行数: ${csvTable.length}';
+          print('警告: 文章列表为空');
         }
         _isLoading = false;
       });
 
-      print('文章列表更新完成，当前选中文章: $_currentArticleTitle'); // 添加Log输出
-
       // 加载第一篇文章
       if (_articleList.isNotEmpty) {
         await _loadArticleContent(_articleList.first);
+      } else {
+        setState(() {
+          _markdownContent =
+              '# 无可用文章\n\n未找到任何可用的文章。请检查CSV文件格式。\n\n调试信息：\n- 文件长度: ${csvContent.length}\n- 解析行数: ${csvTable.length}\n- 处理后的内容前100字符: ${processedContent.substring(0, processedContent.length < 100 ? processedContent.length : 100)}';
+          _errorMessage = '没有找到任何文章，请检查CSV文件格式。';
+        });
       }
-    } catch (e) {
-      print('加载文章列表失败: $e'); // 添加Log输出
+    } catch (e, stackTrace) {
+      print('加载文章列表失败: $e');
+      print('堆栈跟踪: $stackTrace');
       setState(() {
         _markdownContent = '# 加载失败\n\n无法加载文章列表: $e';
         _isLoading = false;
@@ -834,6 +922,8 @@ class _MainPageState extends State<MainPage> {
         _articleList = [];
         _filteredArticleList = [];
         _dataVersion = "0";
+        _currentArticleTitle = '加载失败';
+        _currentArticleFilePath = '';
       });
     }
   }
