@@ -733,6 +733,7 @@ class _MainPageState extends State<MainPage> {
   }
 
   // 加载并解析CSV文件
+  // 加载并解析CSV文件
   Future<void> _loadArticleList() async {
     try {
       setState(() {
@@ -749,27 +750,82 @@ class _MainPageState extends State<MainPage> {
 
       print('CSV文件加载成功，内容长度: ${csvContent.length}');
 
-      // --- 新增：CSV内容预处理 ---
-      // 1. 替换Windows换行符为Linux换行符
-      String processedContent = csvContent.replaceAll('\r\n', '\n');
-
-      // 2. 移除UTF-8 BOM（如果存在）
-      if (processedContent.startsWith('\uFEFF')) {
-        processedContent = processedContent.substring(1);
-        print('已移除UTF-8 BOM标记');
+      // --- 新增：详细的CSV内容分析 ---
+      print('原始CSV内容（包含转义字符）：');
+      for (int i = 0; i < csvContent.length; i++) {
+        final char = csvContent[i];
+        if (char == '\r') {
+          print('位置$i: 回车符 \\r');
+        } else if (char == '\n') {
+          print('位置$i: 换行符 \\n');
+        } else if (char == '\t') {
+          print('位置$i: 制表符 \\t');
+        } else if (char.codeUnitAt(0) < 32) {
+          print('位置$i: 控制字符(ASCII ${char.codeUnitAt(0)})');
+        }
       }
 
-      // 3. 按行分割以便调试
-      final lines = processedContent.split('\n');
-      print('按行分割，共${lines.length}行');
+      // 检查并修复换行符问题
+      String processedContent = csvContent;
 
-      // 打印前几行查看格式
-      for (int i = 0; i < lines.length && i < 5; i++) {
+      // 情况1：检查是否只有一行（用逗号分割后有7个字段以上，说明是标题行+数据行合并）
+      final List<String> allFields = csvContent.split(',');
+      print('用逗号分割后字段数: ${allFields.length}');
+
+      // 如果字段数明显超过CSV应有的列数，说明确实有换行符问题
+      if (allFields.length > 7) {
+        print('检测到可能的换行符问题，字段数过多: ${allFields.length}');
+
+        // 尝试识别换行符
+        if (csvContent.contains('\r\n')) {
+          print('检测到Windows换行符(\\r\\n)');
+          processedContent = csvContent;
+        } else if (csvContent.contains('\n')) {
+          print('检测到Unix/Linux换行符(\\n)');
+          processedContent = csvContent;
+        } else if (csvContent.contains('\r')) {
+          print('检测到Mac换行符(\\r)');
+          // 将Mac换行符替换为Unix换行符
+          processedContent = csvContent.replaceAll('\r', '\n');
+        } else {
+          print('未检测到标准换行符，可能所有内容都在一行');
+          // 手动插入换行符：假设每行有7个字段
+          final List<String> fields = csvContent.split(',');
+          if (fields.length >= 7) {
+            // 重建CSV内容，在标题行后插入换行符
+            final StringBuffer fixedCsv = StringBuffer();
+            // 标题行（前7个字段）
+            for (int i = 0; i < 7; i++) {
+              fixedCsv.write(fields[i]);
+              if (i < 6) fixedCsv.write(',');
+            }
+            fixedCsv.write('\n');
+
+            // 数据行（后续字段，每7个字段为一行）
+            for (int i = 7; i < fields.length; i += 7) {
+              for (int j = 0; j < 7 && i + j < fields.length; j++) {
+                fixedCsv.write(fields[i + j]);
+                if (j < 6 && i + j + 1 < fields.length) fixedCsv.write(',');
+              }
+              if (i + 7 < fields.length) fixedCsv.write('\n');
+            }
+
+            processedContent = fixedCsv.toString();
+            print('手动重建CSV内容，新长度: ${processedContent.length}');
+          }
+        }
+      }
+
+      // 按行分割以便调试
+      final List<String> lines = processedContent.split('\n');
+      print('按\\n分割，共${lines.length}行');
+
+      for (int i = 0; i < lines.length; i++) {
         print('行$i: "${lines[i]}" (长度: ${lines[i].length})');
       }
-      // --- 预处理结束 ---
+      // --- 分析结束 ---
 
-      // 使用处理后的内容解析CSV
+      // 解析CSV内容
       print('开始解析处理后的CSV内容，长度: ${processedContent.length}');
       final List<List<dynamic>> csvTable = const CsvToListConverter().convert(
         processedContent,
@@ -779,7 +835,13 @@ class _MainPageState extends State<MainPage> {
 
       // 检查标题行
       if (csvTable.isNotEmpty) {
-        print('标题行: $csvTable[0] (列数: ${csvTable[0].length})');
+        print('标题行: ${csvTable[0]} (列数: ${csvTable[0].length})');
+      }
+
+      // 手动解析作为备用方案
+      if (csvTable.length <= 1) {
+        print('CSV解析失败，尝试手动解析...');
+        return _parseCSVManually(csvContent);
       }
 
       // 跳过标题行，将数据转换为Map列表
@@ -791,6 +853,7 @@ class _MainPageState extends State<MainPage> {
         if (row.length >= 4) {
           // 清理文件路径，确保没有多余的空格或换行
           String filePath = row[3].toString().trim();
+          print('原始文件路径: "$filePath"');
 
           // 如果是"DIFY知识库"（AI文章），不需要文件路径
           if (filePath == 'DIFY知识库' || filePath.isEmpty) {
@@ -828,103 +891,138 @@ class _MainPageState extends State<MainPage> {
           };
 
           articles.add(article);
-          print('成功解析文章: ${article['title']}');
+          print('成功解析文章: ${article['title']}，路径: ${article['filePath']}');
         } else if (row.isNotEmpty) {
-          // 打印不完整行的详细信息
           print('警告: 第$i行数据不完整，跳过该行。行数据: $row');
-          print('行内容: ${row.map((cell) => '[$cell]').join(', ')}');
-          print('行原始内容: ${lines[i]}');
         }
       }
 
       print('文章列表解析完成，共${articles.length}篇文章');
 
-      // 如果没有解析到任何文章，尝试手动解析
-      if (articles.isEmpty && csvTable.length > 1) {
-        print('尝试手动解析CSV数据...');
-        for (int i = 1; i < csvTable.length; i++) {
-          final row = csvTable[i];
-          if (row.isNotEmpty) {
-            // 尝试从行字符串中提取字段
-            final String rawLine = lines.length > i ? lines[i] : '';
-            if (rawLine.isNotEmpty) {
-              // 使用逗号分割，但注意处理引号内的逗号
-              final matches = RegExp(
-                r'(?:[^,"]+|"[^"]*")+',
-              ).allMatches(rawLine);
-              final List<String> fields = matches
-                  .map((m) => m.group(0)!.trim())
-                  .toList();
-
-              if (fields.length >= 4) {
-                print('手动解析第$i行成功，字段: $fields');
-
-                String filePath = fields[3];
-                if (filePath == 'DIFY知识库' || filePath.isEmpty) {
-                  filePath = '';
-                } else if (!filePath.startsWith('assets/')) {
-                  filePath = 'assets/$filePath';
-                }
-
-                articles.add({
-                  'title': fields[0],
-                  'author': fields[1],
-                  'version': fields[2],
-                  'filePath': filePath,
-                  'extensionUrl': fields.length > 4 ? fields[4] : '',
-                  'remark': fields.length > 5 ? fields[5] : '',
-                  'tags': fields.length > 6 ? fields[6] : '',
-                });
-              }
-            }
-          }
-        }
-        print('手动解析后，共${articles.length}篇文章');
-      }
-
-      setState(() {
-        _articleList = articles;
-        _filteredArticleList = List.from(articles);
-        _dataVersion = articles.length.toString();
-
-        if (_articleList.isNotEmpty) {
-          _currentArticleTitle = _articleList.first['title']!;
-          _currentArticleFilePath = _articleList.first['filePath']!;
-          print('文章列表更新完成，当前选中文章: $_currentArticleTitle');
-        } else {
-          // 设置默认文章
-          _currentArticleTitle = '无可用文章';
-          _currentArticleFilePath = '';
-          _markdownContent =
-              '# 无可用文章\n\n未找到任何可用的文章。\n\nCSV文件内容长度: ${csvContent.length}\n处理后长度: ${processedContent.length}\n解析行数: ${csvTable.length}';
-          print('警告: 文章列表为空');
-        }
-        _isLoading = false;
-      });
-
-      // 加载第一篇文章
-      if (_articleList.isNotEmpty) {
-        await _loadArticleContent(_articleList.first);
-      } else {
-        setState(() {
-          _markdownContent =
-              '# 无可用文章\n\n未找到任何可用的文章。请检查CSV文件格式。\n\n调试信息：\n- 文件长度: ${csvContent.length}\n- 解析行数: ${csvTable.length}\n- 处理后的内容前100字符: ${processedContent.substring(0, processedContent.length < 100 ? processedContent.length : 100)}';
-          _errorMessage = '没有找到任何文章，请检查CSV文件格式。';
-        });
-      }
+      _updateArticleList(articles, csvContent);
     } catch (e, stackTrace) {
       print('加载文章列表失败: $e');
       print('堆栈跟踪: $stackTrace');
-      setState(() {
-        _markdownContent = '# 加载失败\n\n无法加载文章列表: $e';
-        _isLoading = false;
-        _errorMessage = e.toString();
-        _articleList = [];
-        _filteredArticleList = [];
-        _dataVersion = "0";
-        _currentArticleTitle = '加载失败';
+
+      // 尝试手动解析
+      try {
+        // 加载CSV文件
+        final String csvContent = await rootBundle.loadString(
+          'assets/doc_list.csv',
+        );
+        await _parseCSVManually(csvContent);
+      } catch (e2) {
+        print('手动解析也失败: $e2');
+        setState(() {
+          _markdownContent = '# 加载失败\n\n无法加载文章列表: $e\n\n请检查CSV文件格式。';
+          _isLoading = false;
+          _errorMessage = e.toString();
+          _articleList = [];
+          _filteredArticleList = [];
+          _dataVersion = "0";
+          _currentArticleTitle = '加载失败';
+          _currentArticleFilePath = '';
+        });
+      }
+    }
+  }
+
+  // 新增：手动解析CSV的方法
+  Future<void> _parseCSVManually(String csvContent) async {
+    print('开始手动解析CSV...');
+
+    // 先尝试用换行符分割
+    List<String> lines = csvContent.split('\n');
+    if (lines.length <= 1) {
+      lines = csvContent.split('\r');
+    }
+    if (lines.length <= 1) {
+      lines = csvContent.split('\r\n');
+    }
+
+    print('手动解析找到${lines.length}行');
+
+    final List<Map<String, String>> articles = [];
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i].trim();
+      if (line.isEmpty) continue;
+
+      // 跳过标题行
+      if (i == 0 && line.startsWith('文章名称')) {
+        print('跳过标题行: $line');
+        continue;
+      }
+
+      // 简单逗号分割（注意：不支持带引号的逗号）
+      final List<String> fields = line.split(',');
+      print('手动解析第$i行，字段数: ${fields.length}');
+
+      if (fields.length >= 4) {
+        String filePath = fields[3].trim();
+
+        // 修复路径中的多余空格
+        if (filePath.contains(' ')) {
+          filePath = filePath.replaceAll(' ', '');
+          print('修复路径空格: "$fields[3]" -> "$filePath"');
+        }
+
+        // 如果是"DIFY知识库"（AI文章），不需要文件路径
+        if (filePath == 'DIFY知识库' || filePath.isEmpty) {
+          filePath = '';
+        } else if (!filePath.startsWith('assets/')) {
+          filePath = 'assets/$filePath';
+        }
+
+        final article = {
+          'title': fields[0].trim(),
+          'author': fields[1].trim(),
+          'version': fields[2].trim(),
+          'filePath': filePath,
+          'extensionUrl': fields.length > 4 ? fields[4].trim() : '',
+          'remark': fields.length > 5 ? fields[5].trim() : '',
+          'tags': fields.length > 6 ? fields[6].trim() : '',
+        };
+
+        articles.add(article);
+        print('手动解析成功: ${article['title']}');
+      } else {
+        print('手动解析失败: 第$i行字段不足: $line');
+      }
+    }
+
+    _updateArticleList(articles, csvContent);
+  }
+
+  // 新增：更新文章列表的公共方法
+  void _updateArticleList(
+    List<Map<String, String>> articles,
+    String csvContent,
+  ) {
+    print('更新文章列表，共${articles.length}篇文章');
+
+    setState(() {
+      _articleList = articles;
+      _filteredArticleList = List.from(articles);
+      _dataVersion = articles.length.toString();
+
+      if (_articleList.isNotEmpty) {
+        _currentArticleTitle = _articleList.first['title']!;
+        _currentArticleFilePath = _articleList.first['filePath']!;
+        print('文章列表更新完成，当前选中文章: $_currentArticleTitle');
+      } else {
+        _currentArticleTitle = '无可用文章';
         _currentArticleFilePath = '';
-      });
+        _markdownContent = '# 无可用文章\n\n未找到任何可用的文章。\n\nCSV内容:\n$csvContent';
+        _errorMessage = 'CSV格式可能不正确';
+        print('警告: 文章列表为空');
+      }
+      _isLoading = false;
+    });
+
+    // 加载第一篇文章
+    if (_articleList.isNotEmpty) {
+      _loadArticleContent(_articleList.first);
     }
   }
 
