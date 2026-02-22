@@ -29,16 +29,6 @@
 
 ## 项目结构
 lib/
-├── main.dart # 应用主入口
-├── models/
-│ └── article_model.dart # 数据模型定义
-├── services/
-│ ├── csv_parser.dart # CSV 解析服务
-│ └── markdown_loader.dart # 内容加载服务
-├── widgets/
-│ ├── article_list.dart # 文章列表组件
-│ ├── markdown_viewer.dart # 内容渲染组件
-│ └── search_bar.dart # 搜索组件
 └── assets/
 ├── doc_list.csv # 文章列表配置
 └── markdown/ # Markdown 文件存储
@@ -69,9 +59,6 @@ CSV 文件需要包含以下列：
 - `备注` - 文章标签备注
 - `标签` - 搜索关键词标签
 
-# Flutter Markdown 阅读器
-
-一个基于 Flutter 开发的现代化 Markdown 阅读器，支持本地文件与远程知识库内容的统一管理。
 
 ## 功能特性
 
@@ -98,22 +85,8 @@ CSV 文件需要包含以下列：
 - **代码高亮显示**：支持代码块语法高亮
 - **可选中文本**：支持内容文本选择复制
 
-## 项目结构
-lib/
-├── main.dart # 应用主入口
-├── models/
-│ └── article_model.dart # 数据模型定义
-├── services/
-│ ├── csv_parser.dart # CSV 解析服务
-│ └── markdown_loader.dart # 内容加载服务
-├── widgets/
-│ ├── article_list.dart # 文章列表组件
-│ ├── markdown_viewer.dart # 内容渲染组件
-│ └── search_bar.dart # 搜索组件
-└── assets/
-├── doc_list.csv # 文章列表配置
-└── markdown/ # Markdown 文件存储
-复制
+# Markdown 文件存储
+
 ## 快速开始
 
 ### 环境要求
@@ -199,7 +172,6 @@ builders: {
 'custom': CustomElementBuilder(),
 'latex': LatexElementBuilder(),
 }
-复制
 ### 支持新的内容源
 1. 在 CSV 中添加新的标识列
 2. 在 `_loadArticleContent` 中实现内容加载逻辑
