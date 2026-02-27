@@ -6,6 +6,7 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include <gio/gio.h>
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -18,6 +19,49 @@ G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 static void first_frame_cb(MyApplication* self, FlView *view)
 {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+}
+
+// Function to handle dropped files
+static void on_drag_data_received(GtkWidget *widget, GdkDragContext *context,
+                                 gint x, gint y, GtkSelectionData *data,
+                                 guint info, guint time, gpointer user_data) {
+  gchar **uris = gtk_selection_data_get_uris(data);
+  if (uris != NULL) {
+    MyApplication* self = MY_APPLICATION(user_data);
+    g_autoptr(GPtrArray) new_arguments = g_ptr_array_new_with_free_func(g_free);
+    
+    // Copy existing arguments
+    if (self->dart_entrypoint_arguments) {
+      for (int i = 0; self->dart_entrypoint_arguments[i] != NULL; i++) {
+        g_ptr_array_add(new_arguments, g_strdup(self->dart_entrypoint_arguments[i]));
+      }
+    }
+    
+    // Process dropped files
+    for (int i = 0; uris[i] != NULL; i++) {
+      gchar *uri = uris[i];
+      // Convert file URI to local path
+      gchar *path = g_filename_from_uri(uri, NULL, NULL);
+      if (path != NULL) {
+        // Check if it's a markdown file
+        if (g_str_has_suffix(path, ".md") || g_str_has_suffix(path, ".markdown") || g_str_has_suffix(path, ".txt")) {
+          g_ptr_array_add(new_arguments, g_strdup("--file"));
+          g_ptr_array_add(new_arguments, g_strdup(path));
+          g_free(path);
+          break; // Only handle the first markdown file for now
+        }
+        g_free(path);
+      }
+    }
+    
+    g_ptr_array_add(new_arguments, NULL);
+    // Free old arguments
+    g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+    // Set new arguments
+    self->dart_entrypoint_arguments = (char**)g_ptr_array_free(new_arguments, FALSE);
+    
+    g_strfreev(uris);
+  }
 }
 
 // Implements GApplication::activate.
@@ -66,6 +110,11 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
+  // Enable drag-and-drop on the window
+  gtk_drag_dest_set(GTK_WIDGET(window), GTK_DEST_DEFAULT_ALL, NULL, 0, GDK_ACTION_COPY);
+  gtk_drag_dest_add_uri_targets(GTK_WIDGET(window));
+  g_signal_connect(window, "drag-data-received", G_CALLBACK(on_drag_data_received), self);
+
   // Show the window when Flutter renders.
   // Requires the view to be realized so we can start rendering.
   g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb), self);
@@ -79,8 +128,29 @@ static void my_application_activate(GApplication* application) {
 // Implements GApplication::local_command_line.
 static gboolean my_application_local_command_line(GApplication* application, gchar*** arguments, int* exit_status) {
   MyApplication* self = MY_APPLICATION(application);
-  // Strip out the first argument as it is the binary name.
-  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
+  // Strip out the first argument as it is binary name.
+  // Check if we have file arguments and handle them
+  if (*arguments && *(arguments + 1)) {
+    gchar** file_args = *arguments + 1;
+    // Process file arguments here - pass them to Flutter
+    g_autoptr(GPtrArray) new_arguments = g_ptr_array_new_with_free_func(g_free);
+    // Add original arguments first
+    for (int i = 1; (*arguments)[i] != nullptr; i++) {
+      if (g_strcmp0((*arguments)[i], "%U") != 0) { // Skip %U placeholder
+        g_ptr_array_add(new_arguments, g_strdup((*arguments)[i]));
+      }
+    }
+    // If there are file arguments, add them with --file flag
+    for (int i = 0; file_args[i] != nullptr; i++) {
+      if (g_str_has_suffix(file_args[i], ".md") || g_str_has_suffix(file_args[i], ".markdown")) {
+        g_ptr_array_add(new_arguments, g_strdup("--file"));
+        g_ptr_array_add(new_arguments, g_strdup(file_args[i]));
+        break; // Only handle the first markdown file
+      }
+    }
+    g_ptr_array_add(new_arguments, NULL);
+    self->dart_entrypoint_arguments = (char**)g_ptr_array_free(new_arguments, FALSE);
+  }
 
   g_autoptr(GError) error = nullptr;
   if (!g_application_register(application, nullptr, &error)) {

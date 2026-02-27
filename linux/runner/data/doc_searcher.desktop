@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Doc Searcher
+Comment=Document Search Application
+Exec=/usr/local/bin/doc_searcher %U
+Icon=doc_searcher
+Terminal=false
+Type=Application
+Categories=Office;Utility;
+MimeType=text/markdown;text/x-markdown;
+StartupNotify=true

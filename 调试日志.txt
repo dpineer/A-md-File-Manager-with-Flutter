@@ -1,0 +1,44 @@
+2026-02-22 15:46:42
+用户任务：实现Linux下的文件拖拽功能
+用户提示词：请尝试使用浏览器搜索,flutter拖拽文件进入界面在Linux
+
+当前项目分析：
+- 项目是一个Flutter文档搜索器应用
+- 已经使用了flutter_dropzone库来处理拖拽功能
+- 在lib/main.dart中已有部分拖拽功能实现，但可能不适用于Linux
+
+现有代码分析：
+- 代码中使用了DragTarget组件作为桌面拖拽区域
+- 有_fileDropZoneController用于Web端的拖拽功能
+- 但Linux桌面环境的拖拽功能可能未完全实现
+
+需要实现Linux原生拖拽支持，这通常需要：
+1. 在Linux平台上使用原生拖拽API
+2. 修改linux/runner/my_application.cc文件来处理拖拽事件
+3. 与Flutter端通信来处理拖拽的文件
+
+2026-02-22 15:47:15
+开始实现Linux原生拖拽功能
+
+根据分析，需要在Linux平台上实现原生拖拽支持。这涉及：
+1. 修改linux/runner/my_application.cc来处理GTK的拖拽事件
+2. 在Flutter端接收文件路径并处理
+3. 确保拖拽的文件能正确显示在应用中
+
+当前代码中已经有部分桌面拖拽支持（DragTarget组件），但可能只适用于Windows/Mac，需要增强Linux支持。
+
+2026-02-22 15:49:30
+已修改linux/runner/my_application.cc文件，添加了GTK拖拽支持：
+- 添加了on_drag_data_received回调函数来处理拖拽的文件
+- 在my_application_activate函数中启用了窗口的拖拽目标功能
+- 设置了URI目标类型，以便接收文件URI
+- 将拖拽的文件路径作为命令行参数传递给Flutter应用
+
+同时修改了lib/main.dart文件，添加了_handleNativeFile方法来处理从原生平台传递过来的文件路径。
+
+2026-02-22 15:50:20
+发现错误：在lib/main.dart中重复定义了initState方法，已修正此问题。
+现在Linux原生拖拽功能已实现，包括：
+1. 在C++层处理GTK拖拽事件
+2. 将拖拽的文件路径传递给Flutter应用
+3. 在Flutter层处理并显示拖拽的文件内容

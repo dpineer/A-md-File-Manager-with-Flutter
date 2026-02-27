@@ -8,12 +8,64 @@ import 'Line_Draw.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert'; // 用于jsonDecode
 import 'dart:async'; // 用于StreamController
+import 'package:flutter_dropzone/flutter_dropzone.dart';
+import 'dart:typed_data';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'package:file_selector/file_selector.dart';
+import 'package:args/args.dart';
+import 'dart:ui' as ui;
 
-void main() {
-  runApp(MyApp());
+void main(List<String> arguments) async {
+  // 记录所有命令行参数
+  print('接收到的命令行参数: $arguments');
+  
+  // 创建debug文件夹并写入启动日志
+  try {
+    final debugDir = Directory('debug');
+    if (!await debugDir.exists()) {
+      await debugDir.create(recursive: true);
+    }
+
+    // 创建日志文件（按日期命名）
+    final now = DateTime.now();
+    final logFileName = 'log_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.txt';
+    final logFile = File('${debugDir.path}/$logFileName');
+
+    // 写入启动日志，包含命令行参数
+    final timestamp = DateTime.now().toString().split('.')[0]; // 去掉毫秒部分
+    final logEntry = '[$timestamp] 应用启动 - 接收到的命令行参数: $arguments';
+    await logFile.writeAsString(logEntry + '\n', mode: FileMode.append, encoding: utf8);
+  } catch (e) {
+    print('写入启动日志失败: $e');
+  }
+
+  // 解析命令行参数
+  final parser = ArgParser()
+    ..addOption('file', abbr: 'f', help: '要打开的Markdown文件路径');
+
+  try {
+    final results = parser.parse(arguments);
+    final filePath = results['file'] as String?;
+
+    if (filePath != null && filePath.isNotEmpty) {
+      // 如果提供了文件路径参数，启动应用并打开该文件
+      runApp(MyApp(filePath: filePath));
+    } else {
+      // 否则正常启动应用
+      runApp(MyApp());
+    }
+  } catch (e) {
+    print('解析命令行参数时出错: $e');
+    runApp(MyApp());
+  }
 }
 
 class MyApp extends StatelessWidget {
+  final String? filePath;
+
+  MyApp({this.filePath});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -22,12 +74,16 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: MainPage(),
+      home: MainPage(filePath: filePath),
     );
   }
 }
 
 class MainPage extends StatefulWidget {
+  final String? filePath;
+
+  MainPage({this.filePath});
+
   @override
   _MainPageState createState() => _MainPageState();
 }
@@ -52,10 +108,219 @@ class _MainPageState extends State<MainPage> {
   final String _appVersion = "0.0.0.dev";
   String _dataVersion = "0";
 
+  // 调试模式相关
+  bool _debugMode = true; // 启动时默认开启调试模式
+  final List<String> _debugLogs = [];
+  StreamController<String>? _debugLogStreamController;
+
   final TextEditingController _aiMessageController = TextEditingController();
   final List<Map<String, dynamic>> _conversationHistory = [];
   bool _isWaitingForAI = false;
   String _selectedConversationMode = 'general';
+
+  // 添加日志记录方法
+  void _logDebug(String message) {
+    if (_debugMode) {
+      final timestamp = DateTime.now().toString().split('.')[0]; // 去掉毫秒部分
+      final logEntry = '[$timestamp] $message';
+      _debugLogs.add(logEntry);
+      print(logEntry); // 同时在控制台输出
+
+      // 如果调试窗口已打开，发送日志到流
+      if (_debugLogStreamController != null && 
+          !_debugLogStreamController!.isClosed) {
+        _debugLogStreamController!.add(logEntry);
+      }
+
+      // 实时写入日志到debug文件夹
+      _writeLogToFile(logEntry);
+    }
+  }
+
+  // 将日志写入debug文件夹
+  Future<void> _writeLogToFile(String logEntry) async {
+    try {
+      // 获取项目根目录下的debug文件夹路径
+      final debugDir = Directory('debug');
+      if (!await debugDir.exists()) {
+        await debugDir.create(recursive: true);
+      }
+
+      // 创建日志文件（按日期命名）
+      final now = DateTime.now();
+      final logFileName = 'log_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.txt';
+      final logFile = File('${debugDir.path}/$logFileName');
+
+      // 追加写入日志内容，使用UTF-8编码的字节
+      final logBytes = utf8.encode('$logEntry\n');
+      await logFile.writeAsBytes(logBytes, mode: FileMode.append);
+    } catch (e) {
+      print('写入日志文件失败: $e');
+    }
+  }
+
+  // 显示调试日志窗口
+  void _showDebugLogWindow() {
+    // 创建一个新的StreamController用于实时更新日志
+    _debugLogStreamController = StreamController<String>();
+
+    // 使用Navigator.push创建一个独立的页面
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (BuildContext context) {
+          return StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: Text('调试日志窗口'),
+                  backgroundColor: Colors.black,
+                  foregroundColor: Colors.white,
+                  actions: [
+                    IconButton(
+                      icon: Icon(Icons.close),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        // 关闭调试模式时清理资源
+                        if (_debugLogStreamController != null &&
+                            !_debugLogStreamController!.isClosed) {
+                          _debugLogStreamController!.close();
+                          _debugLogStreamController = null;
+                        }
+                        setState(() {
+                          _debugMode = false;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.black,
+                body: Container(
+                  padding: EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 日志内容区域
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey[900],
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.grey[700]!, width: 1),
+                          ),
+                          child: StreamBuilder<String>(
+                            stream: _debugLogStreamController!.stream,
+                            builder: (context, AsyncSnapshot<String> snapshot) {
+                              if (snapshot.hasData) {
+                                // 添加新的日志到列表
+                                _debugLogs.add(snapshot.data!);
+                              }
+
+                              return ListView.builder(
+                                itemCount: _debugLogs.length,
+                                itemBuilder: (context, index) {
+                                  return Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    child: Text(
+                                      _debugLogs[index],
+                                      style: TextStyle(
+                                        color: Colors.green[400],
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 10),
+
+                      // 控制按钮
+                      Row(
+                        children: [
+                          ElevatedButton(
+                            onPressed: () {
+                              _debugLogs.clear();
+                              setState(() {});
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[800],
+                              foregroundColor: Colors.white,
+                              side: BorderSide(color: Colors.grey[600]!, width: 1),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            child: Text('清空日志', style: TextStyle(fontSize: 12)),
+                          ),
+                          SizedBox(width: 10),
+                          ElevatedButton(
+                            onPressed: () {
+                              // 保存日志到文件
+                              _saveDebugLogsToFile();
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[800],
+                              foregroundColor: Colors.white,
+                              side: BorderSide(color: Colors.grey[600]!, width: 1),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            child: Text('保存日志', style: TextStyle(fontSize: 12)),
+                          ),
+                          Spacer(),
+                          Text(
+                            '日志条数: ${_debugLogs.length}',
+                            style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+        fullscreenDialog: true, // 作为全屏对话框显示，更像独立窗口
+      ),
+    );
+  }
+
+  // 保存调试日志到文件
+  Future<void> _saveDebugLogsToFile() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().toString().replaceAll(':', '-').replaceAll(' ', '_');
+      final file = File('${directory.path}/debug_logs_$timestamp.txt');
+
+      final content = _debugLogs.join('\n');
+      await file.writeAsString(content);
+
+      // 显示保存成功提示
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('调试日志已保存到: ${file.path}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      print('保存调试日志失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('保存调试日志失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
   // 对话模式选项
   final List<Map<String, String>> _conversationModes = [
@@ -71,10 +336,31 @@ class _MainPageState extends State<MainPage> {
   bool _isStreaming = false;
   String _currentStreamingResponse = "";
 
+  // 拖拽功能相关变量
+  DropzoneViewController? _dropzoneViewController;
+  bool _isDragOver = false;
+
   @override
   void initState() {
     super.initState();
-    _loadArticleList();
+    // 启动时自动开启调试模式
+    _debugMode = true;
+    _logDebug('应用启动 - 调试模式已开启');
+
+    // 如果提供了文件路径参数，则加载该文件，否则加载文章列表
+    if (widget.filePath != null && widget.filePath!.isNotEmpty) {
+      _logDebug('通过命令行参数加载文件: ${widget.filePath}');
+      _loadMarkdownFile(widget.filePath!);
+      // 创建一个虚拟的文章条目
+      setState(() {
+        _currentArticleTitle = widget.filePath!.split('/').last;
+        _currentArticleFilePath = widget.filePath!;
+      });
+    } else {
+      _logDebug('加载默认文章列表');
+      _loadArticleList();
+    }
+
     _searchController.addListener(_onSearchChanged);
   }
 
@@ -707,8 +993,16 @@ class _MainPageState extends State<MainPage> {
         });
       } else if (filePath != null && filePath.isNotEmpty) {
         try {
-          // 从本地Markdown文件加载内容
-          content = await rootBundle.loadString(filePath);
+          // 检查是否是拖拽的文件（路径包含dragged_articles）
+          if (filePath.contains('dragged_articles/')) {
+            // 从应用文档目录加载拖拽的文件
+            final directory = await getApplicationDocumentsDirectory();
+            final file = File('${directory.path}/$filePath');
+            content = await file.readAsString();
+          } else {
+            // 从assets目录加载本地Markdown文件
+            content = await rootBundle.loadString(filePath);
+          }
         } catch (e) {
           // 如果文件加载失败，显示错误信息
           content = '# 文件加载失败\n\n无法加载文件: $filePath\n错误: $e';
@@ -899,6 +1193,9 @@ class _MainPageState extends State<MainPage> {
 
       print('文章列表解析完成，共${articles.length}篇文章');
 
+      // 检查是否有更新的CSV文件（包含拖拽文件的）
+      await _loadUpdatedCSV(articles);
+
       _updateArticleList(articles, csvContent);
     } catch (e, stackTrace) {
       print('加载文章列表失败: $e');
@@ -924,6 +1221,55 @@ class _MainPageState extends State<MainPage> {
           _currentArticleFilePath = '';
         });
       }
+    }
+  }
+
+  // 新增：加载更新的CSV文件（包含拖拽文件的）
+  Future<void> _loadUpdatedCSV(List<Map<String, String>> articles) async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final csvFile = File('${directory.path}/doc_list_updated.csv');
+
+      if (await csvFile.exists()) {
+        final String csvContent = await csvFile.readAsString();
+        final List<List<dynamic>> csvTable = const CsvToListConverter().convert(csvContent);
+
+        // 跳过标题行
+        for (int i = 1; i < csvTable.length; i++) {
+          final row = csvTable[i];
+
+          if (row.length >= 4) {
+            final article = {
+              'title': row[0].toString().trim(),
+              'author': row[1].toString().trim(),
+              'version': row[2].toString().trim(),
+              'filePath': row[3].toString().trim(),
+              'extensionUrl': row.length > 4 ? row[4].toString().trim() : '',
+              'remark': row.length > 5 ? row[5].toString().trim() : '',
+              'tags': row.length > 6 ? row[6].toString().trim() : '',
+            };
+
+            // 检查是否已存在相同的文件路径，避免重复添加
+            bool exists = false;
+            for (final existingArticle in articles) {
+              if (existingArticle['filePath'] == article['filePath']) {
+                exists = true;
+                break;
+              }
+            }
+
+            if (!exists) {
+              articles.add(article);
+              print('从更新的CSV加载文章: ${article['title']}，路径: ${article['filePath']}');
+            }
+          }
+        }
+      } else {
+        print('未找到更新的CSV文件，使用原始CSV文件');
+      }
+    } catch (e) {
+      print('加载更新的CSV文件失败: $e');
+      // 如果加载更新的CSV失败，继续使用原始的articles列表
     }
   }
 
@@ -1033,7 +1379,25 @@ class _MainPageState extends State<MainPage> {
         _errorMessage = null;
       });
 
-      final String content = await rootBundle.loadString(filePath);
+      String content;
+      // 检查是否是绝对路径（以/开头）
+      if (filePath.startsWith('/')) {
+        // 这是一个完整的文件系统路径，直接读取
+        final file = File(filePath);
+        if (await file.exists()) {
+          content = await file.readAsString();
+        } else {
+          content = '# 文件不存在\n\n无法找到文件: $filePath';
+        }
+      } else if (filePath.contains('dragged_articles/')) {
+        // 从应用文档目录加载拖拽的文件
+        final directory = await getApplicationDocumentsDirectory();
+        final file = File('${directory.path}/$filePath');
+        content = await file.readAsString();
+      } else {
+        // 从assets目录加载本地Markdown文件
+        content = await rootBundle.loadString(filePath);
+      }
 
       setState(() {
         _markdownContent = content;
@@ -1048,12 +1412,13 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
-  // 处理文章点击事件
+// 处理文章点击事件
   void _onArticleTap(
     String articleTitle,
     String filePath,
     String extensionUrl,
   ) {
+    _logDebug('点击文章: $articleTitle, 路径: $filePath, 扩展URL: $extensionUrl');
     final article = _articleList.firstWhere(
       (article) => article['title'] == articleTitle,
       orElse: () => {},
@@ -1065,6 +1430,215 @@ class _MainPageState extends State<MainPage> {
         _currentArticleFilePath = filePath;
       });
       _loadArticleContent(article);
+    } else {
+      _logDebug('未找到文章: $articleTitle');
+    }
+  }
+
+// 新增：桌面环境拖拽支持
+  Widget _buildDragAndDropArea() {
+    // 检查是否为桌面环境
+    bool isDesktop = true; // 默认为桌面环境
+
+    // 对于桌面环境，使用DragTarget组件
+    return Stack(
+      children: [
+        // 桌面拖拽区域
+        DragTarget<String>(
+          onWillAccept: (data) {
+            if (data != null) {
+              String fileName = data.toLowerCase();
+              setState(() {
+                _isDragOver = true;
+              });
+              return fileName.endsWith('.md') || 
+                     fileName.endsWith('.txt') || 
+                     fileName.endsWith('.markdown');
+            }
+            return false;
+          },
+          onAccept: (data) async {
+            // 这里需要获取文件内容，但桌面拖拽需要特殊处理
+            // 由于Flutter桌面拖拽限制，我们使用文件选择器作为替代方案
+            _showDesktopFilePicker();
+          },
+          onLeave: (data) {
+            setState(() {
+              _isDragOver = false;
+            });
+          },
+          builder: (context, candidateData, rejectedData) {
+            return Container(
+              width: double.infinity,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                color: _isDragOver ? Colors.blue[50] : Colors.white,
+                border: Border.all(
+                  color: _isDragOver ? Colors.blue : Colors.transparent,
+                  width: 3.0,
+                ),
+              ),
+              child: _buildContentArea(),
+            );
+          },
+        ),
+        // 拖拽提示覆盖层
+        if (_isDragOver)
+          Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.2),
+            ),
+            child: Center(
+              child: Container(
+                padding: EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.blue, width: 2),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.file_upload,
+                      size: 48,
+                      color: Colors.blue,
+                    ),
+                    SizedBox(height: 10),
+                    Text(
+                      '释放以打开文件',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    SizedBox(height: 5),
+                    Text(
+                      '支持的文件类型: .md, .txt, .markdown',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // 新增：处理从原生平台传递过来的文件路径
+  void _handleNativeFile(String filePath) async {
+    try {
+      _logDebug('接收到原生平台传递的文件路径: $filePath');
+
+      // 检查文件是否存在
+      final file = File(filePath);
+      if (await file.exists()) {
+        // 读取文件内容
+        String content = await file.readAsString();
+
+        // 保存文件到应用文档目录以便后续访问
+        await _saveDroppedFile(filePath.split('/').last, content);
+
+        // 更新界面显示
+        setState(() {
+          _currentArticleTitle = filePath.split('/').last;
+          _currentArticleFilePath = 'dragged_articles/${filePath.split('/').last}';
+          _markdownContent = content;
+        });
+
+        _logDebug('成功加载拖拽的文件: ${filePath.split('/').last}');
+      } else {
+        _logDebug('文件不存在: $filePath');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('文件不存在: $filePath'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      _logDebug('处理原生文件时出错: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('处理文件时出错: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // 新增：构建内容区域
+  Widget _buildContentArea() {
+    return _isLoading && _markdownContent == '# 加载中...'
+        ? Center(child: CircularProgressIndicator())
+        : _isAIArticle() // 判断是否为AI选项卡
+        ? _buildAIChatInterface() // 显示AI对话界面
+        : Markdown(
+            selectable: true,
+            data: _markdownContent,
+            builders: {
+              'latex': LatexElementBuilder(
+                textStyle: const TextStyle(fontWeight: FontWeight.w100),
+                textScaleFactor: 1.2,
+              ),
+              'code': ChartElementBuilder(),
+            },
+            extensionSet: md.ExtensionSet(
+              [
+                ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+                LatexBlockSyntax(),
+              ],
+              [
+                ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+                LatexInlineSyntax(),
+              ],
+            ),
+          );
+  }
+
+  // 新增：显示桌面文件选择器
+  void _showDesktopFilePicker() async {
+    try {
+      const XTypeGroup typeGroup = XTypeGroup(
+        label: 'Markdown Files',
+        extensions: ['md', 'txt', 'markdown'],
+      );
+
+      final XFile? file = await openFile(acceptedTypeGroups: [typeGroup]);
+      if (file != null) {
+        String fileName = file.name;
+        String content = await file.readAsString();
+
+        // 保存文件并更新文章列表
+        await _saveDroppedFile(fileName, content);
+
+        // 显示成功提示
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('成功添加文件: $fileName'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      print("Error selecting file: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('选择文件时出错: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -1098,7 +1672,7 @@ class _MainPageState extends State<MainPage> {
                 ),
                 SizedBox(height: 20),
 
-                // 功能按钮区域 - 只保留刷新目录和获取更新
+                // 功能按钮区域 - 添加调试模式选项
                 Column(
                   children: [
                     Row(
@@ -1117,6 +1691,34 @@ class _MainPageState extends State<MainPage> {
                             icon: Icons.cloud_download,
                             text: '获取更新',
                             onPressed: _fetchUpdates,
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 12),
+                    // 调试模式开关
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildSettingButton(
+                            icon: _debugMode ? Icons.bug_report : Icons.build,
+                            text: _debugMode ? '调试模式: 开' : '调试模式: 关',
+                            onPressed: () {
+                              setState(() {
+                                _debugMode = !_debugMode;
+                              });
+                              if (_debugMode) {
+                                _logDebug('调试模式已开启');
+                                _showDebugLogWindow(); // 显示调试日志窗口
+                              } else {
+                                _logDebug('调试模式已关闭');
+                                if (_debugLogStreamController != null &&
+                                    !_debugLogStreamController!.isClosed) {
+                                  _debugLogStreamController!.close();
+                                  _debugLogStreamController = null;
+                                }
+                              }
+                            },
                           ),
                         ),
                       ],
@@ -1248,6 +1850,82 @@ class _MainPageState extends State<MainPage> {
     );
     final extensionUrl = currentArticle['extensionUrl'] ?? '';
     return extensionUrl.isNotEmpty;
+  }
+
+  // 新增：保存拖拽的文件到本地并更新文章列表
+  Future<void> _saveDroppedFile(String fileName, String content) async {
+    try {
+      // 获取应用文档目录
+      final directory = await getApplicationDocumentsDirectory();
+      final targetDir = Directory('${directory.path}/dragged_articles');
+      
+      // 创建目录（如果不存在）
+      if (!await targetDir.exists()) {
+        await targetDir.create(recursive: true);
+      }
+
+      // 创建文件
+      final file = File('${targetDir.path}/$fileName');
+      await file.writeAsString(content);
+
+      // 更新文章列表
+      final newArticle = {
+        'title': fileName,
+        'author': '用户拖拽',
+        'version': '1',
+        'filePath': 'dragged_articles/$fileName', // 相对于文档目录的路径
+        'extensionUrl': '',
+        'remark': '拖拽添加',
+        'tags': '拖拽文件',
+      };
+
+      setState(() {
+        _articleList.add(newArticle);
+        _filteredArticleList.add(newArticle);
+        _currentArticleTitle = fileName;
+        _currentArticleFilePath = 'dragged_articles/$fileName';
+        _markdownContent = content;
+      });
+
+      // 更新CSV文件
+      await _updateCSVFile();
+
+      print('成功保存拖拽文件: $fileName');
+    } catch (e) {
+      print('保存拖拽文件失败: $e');
+      throw e;
+    }
+  }
+
+  // 新增：更新CSV文件
+  Future<void> _updateCSVFile() async {
+    try {
+      // 构建CSV内容
+      final csvContent = StringBuffer();
+      csvContent.writeln('文章名称,作者,版本号,md文件地址（使用/而非\\）,拓展内容地址,备注,标签');
+
+      for (final article in _articleList) {
+        csvContent.writeln([
+          article['title'] ?? '',
+          article['author'] ?? '',
+          article['version'] ?? '',
+          article['filePath'] ?? '',
+          article['extensionUrl'] ?? '',
+          article['remark'] ?? '',
+          article['tags'] ?? '',
+        ].join(','));
+      }
+
+      // 获取应用文档目录
+      final directory = await getApplicationDocumentsDirectory();
+      final csvFile = File('${directory.path}/doc_list_updated.csv');
+      await csvFile.writeAsString(csvContent.toString());
+
+      print('CSV文件已更新: ${csvFile.path}');
+    } catch (e) {
+      print('更新CSV文件失败: $e');
+      throw e;
+    }
   }
 
   void _fetchUpdates() async {
@@ -1416,33 +2094,9 @@ class _MainPageState extends State<MainPage> {
             ),
           ),
 
-          // 右侧主内容区
+          // 右侧主内容区 - 添加拖拽区域
           Expanded(
-            child: _isLoading && _markdownContent == '# 加载中...'
-                ? Center(child: CircularProgressIndicator())
-                : _isAIArticle() // 判断是否为AI选项卡
-                ? _buildAIChatInterface() // 显示AI对话界面
-                : Markdown(
-                    selectable: true,
-                    data: _markdownContent,
-                    builders: {
-                      'latex': LatexElementBuilder(
-                        textStyle: const TextStyle(fontWeight: FontWeight.w100),
-                        textScaleFactor: 1.2,
-                      ),
-                      'code': ChartElementBuilder(),
-                    },
-                    extensionSet: md.ExtensionSet(
-                      [
-                        ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
-                        LatexBlockSyntax(),
-                      ],
-                      [
-                        ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
-                        LatexInlineSyntax(),
-                      ],
-                    ),
-                  ),
+            child: _buildDragAndDropArea(),
           ),
         ],
       ),

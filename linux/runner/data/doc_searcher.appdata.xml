@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.example.doc_searcher</id>
+  <name>Doc Searcher</name>
+  <summary>Document Search Application</summary>
+  <description>
+    <p>A document search application that can open and search markdown files.</p>
+  </description>
+  <categories>
+    <category>Office</category>
+    <category>Utility</category>
+  </categories>
+  <provides>
+    <binary>doc_searcher</binary>
+  </provides>
+  <mimetypes>
+    <mimetype>text/markdown</mimetype>
+    <mimetype>text/x-markdown</mimetype>
+  </mimetypes>
+</component>
