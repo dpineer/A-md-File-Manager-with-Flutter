@@ -1,6 +1,6 @@
-# Flutter Markdown 阅读器
+# 文档搜索器 (Doc Searcher)
 
-一个基于 Flutter 开发的现代化 Markdown 阅读器，支持本地文件与远程知识库内容的统一管理。
+一个基于 Flutter 开发的强大 Markdown 文档搜索与管理应用，支持本地文件与远程知识库内容的统一管理。
 
 ## 功能特性
 
@@ -26,33 +26,7 @@
 - **LaTeX 数学公式**：集成 Latex 渲染支持
 - **代码高亮显示**：支持代码块语法高亮
 - **可选中文本**：支持内容文本选择复制
-
-## 项目结构
-lib/
-└── assets/
-├── doc_list.csv # 文章列表配置
-└── markdown/ # Markdown 文件存储
-
-## 快速开始
-
-### 环境要求
-- Flutter 3.0.0 或更高版本
-- Dart 2.17.0 或更高版本
-
-### 安装步骤
-
-
-1. **克隆项目**
-bash
-git clone https://github.com/your-username/flutter-markdown-reader.git
-cd flutter-markdown-reader
-
-## 配置说明
-# Flutter Markdown 文档搜索器代码分析
-
-## 项目概述
-
-这是一个基于 Flutter 开发的 Markdown 文档搜索器应用，支持本地 Markdown 文件和远程 Dify 知识库的统一管理与搜索。项目通过 CSV 文件配置文章列表，提供现代化的 UI 界面和丰富的 Markdown 渲染功能。
+- **图表渲染**：支持 Markdown 中的图表渲染
 
 ## 项目结构
 
@@ -65,6 +39,62 @@ assets/
 ├── Help.md            # 帮助文档
 ├── database/article/  # Markdown 文件存储目录
 └── readtemp/          # 临时文件目录
+```
+
+## 快速开始
+
+### 环境要求
+- Flutter 3.0.0 或更高版本
+- Dart 2.17.0 或更高版本
+
+### 安装步骤
+
+1. **克隆项目**
+```bash
+git clone https://github.com/dpineer/A-md-File-Manager-with-Flutter.git
+cd doc_searcher
+```
+
+2. **安装依赖**
+```bash
+flutter pub get
+```
+
+3. **配置文章列表**
+在 `assets/doc_list.csv` 中配置文章信息：
+```csv
+文章名称,作者,版本,文件路径,扩展URL,备注,标签
+示例文章,张三,1.0,assets/sample.md,,技术文档,flutter
+AI文章,李四,1.0,,https://api.dify.com,AI生成,ai
+```
+
+4. **运行项目**
+```bash
+flutter run
+```
+
+## 配置说明
+
+### CSV 文件格式
+CSV 文件需要包含以下列：
+- `文章名称` - 文章显示标题
+- `作者` - 文章作者信息  
+- `版本` - 内容版本号
+- `文件路径` - 本地文件路径（assets/ 开头）
+- `扩展URL` - Dify 知识库地址（为空表示本地文章）
+- `备注` - 文章标签备注
+- `标签` - 搜索关键词标签
+
+### 文章类型支持
+
+#### 本地文章
+```csv
+Flutter入门指南,王五,1.0,assets/flutter_intro.md,,技术文档,flutter
+```
+
+#### Dify 知识库文章
+```csv
+AI助手使用说明,AI助手,1.0,,https://api.dify.com/v1,AI生成,ai
 ```
 
 ## 核心功能模块
@@ -96,11 +126,6 @@ assets/
 }
 ```
 
-#### CSV 解析功能
-- 支持自动修复换行符问题
-- 智能路径处理
-- 多种格式兼容
-
 ### 2. 图表绘制模块 (Line_Draw.dart)
 
 #### 主要类
@@ -125,6 +150,14 @@ dependencies:
   csv: ^6.0.0                         # CSV 文件处理
   fl_chart: ^1.1.1                    # 图表渲染
   dio: ^5.9.0                         # HTTP 客户端 (用于Dify API)
+  path: ^1.9.1                        # 路径处理
+  path_provider: ^2.1.5               # 文件路径提供器
+  file_picker: ^10.3.7                # 文件选择器
+  url_launcher: ^6.3.2                # URL 启动器
+  flutter_math_fork: ^0.7.4           # 数学公式渲染
+  flutter_dropzone: ^4.2.1            # 拖拽上传
+  open_file_plus: ^3.4.1+1            # 文件打开
+  permission_handler: ^12.0.1         # 权限处理
 ```
 
 ## 核心功能实现
@@ -182,17 +215,6 @@ dependencies:
 - 支持多种路径格式
 - 智能路径转换
 
-## 配置文件
-
-### doc_list.csv 格式
-```
-文章名称,作者,版本号,md文件地址,拓展内容地址,备注,标签
-```
-
-### 支持的文件类型
-- 本地 Markdown 文件
-- Dify 知识库 (通过扩展URL)
-
 ## 错误处理与调试
 
 ### 错误处理机制
@@ -231,130 +253,17 @@ dependencies:
 3. **学术研究**: 支持数学公式和图表
 4. **内容创作**: 便捷的 Markdown 编辑和查看
 
-这个项目是一个功能丰富的 Markdown 文档管理工具，结合了现代移动应用开发的最佳实践，提供了从基础文档查看到高级 AI 交互的完整解决方案。
-### CSV 文件格式
-CSV 文件需要包含以下列：
-- `文章名称` - 文章显示标题
-- `作者` - 文章作者信息  
-- `版本` - 内容版本号
-- `文件路径` - 本地文件路径（assets/ 开头）
-- `扩展URL` - Dify 知识库地址（为空表示本地文章）
-- `备注` - 文章标签备注
-- `标签` - 搜索关键词标签
-
-
-## 功能特性
-
-### 多源内容管理
-- **CSV 驱动的文章列表**：通过 `doc_list.csv` 配置文件管理所有文章元数据
-- **本地 Markdown 文件支持**：直接读取 assets 目录下的 Markdown 文件
-- **Dify 知识库集成**：支持远程 AI 生成内容的无缝集成
-- **智能路径处理**：自动修复文件路径空格，支持多种路径格式
-
-### 智能搜索与导航
-- **实时搜索功能**：支持按标题、作者、标签多维度搜索
-- **文章列表过滤**：动态显示匹配结果数量
-- **清晰的状态标识**：当前选中文章高亮显示，Dify 来源特殊标识
-
-### 交互体验优化
-- **响应式布局**：左侧导航栏与右侧内容区灵活布局
-- **加载状态管理**：完整的加载中、错误处理、空状态提示
-- **设置面板**：集成帮助文档、更新检查等功能
-- **手势操作支持**：文章卡片点击反馈，滑动操作流畅
-
-### 内容渲染能力
-- **Markdown 语法支持**：基于 flutter_markdown 包的全格式支持
-- **LaTeX 数学公式**：集成 Latex 渲染支持
-- **代码高亮显示**：支持代码块语法高亮
-- **可选中文本**：支持内容文本选择复制
-
-# Markdown 文件存储
-
-## 快速开始
-
-### 环境要求
-- Flutter 3.0.0 或更高版本
-- Dart 2.17.0 或更高版本
-
-### 安装步骤
-
-1. **克隆项目**
-bash
-git clone https://github.com/your-username/flutter-markdown-reader.git
-cd flutter-markdown-reader
-复制
-2. **安装依赖**
-bash
-flutter pub get
-复制
-3. **配置文章列表**
-在 `assets/doc_list.csv` 中配置文章信息：
-csv
-文章名称,作者,版本,文件路径,扩展URL,备注,标签
-示例文章,张三,1.0,assets/sample.md,,技术文档,flutter
-AI文章,李四,1.0,,https://api.dify.com,AI生成,ai
-复制
-4. **运行项目**
-bash
-flutter run
-复制
-## 配置说明
-
-### CSV 文件格式
-CSV 文件需要包含以下列：
-- `文章名称` - 文章显示标题
-- `作者` - 文章作者信息  
-- `版本` - 内容版本号
-- `文件路径` - 本地文件路径（assets/ 开头）
-- `扩展URL` - Dify 知识库地址（为空表示本地文章）
-- `备注` - 文章标签备注
-- `标签` - 搜索关键词标签
-
-### 文章类型支持
-
-#### 本地文章
-csv
-Flutter入门指南,王五,1.0,assets/flutter_intro.md,,技术文档,flutter
-复制
-#### Dify 知识库文章
-csv
-AI助手使用说明,AI助手,1.0,,https://api.dify.com/v1,AI生成,ai
-复制
-## 核心方法说明
-
-### 文章列表加载
-dart
-Future<void> _loadArticleList() async
-复制
-- 从 CSV 加载文章元数据
-- 支持自动重试和手动解析备用方案
-- 智能路径处理和类型识别
-
-### 内容渲染
-dart
-Future<void> _loadMarkdownFile(String filePath) async
-复制
-- 异步加载 Markdown 内容
-- 错误处理和状态管理
-- 支持本地和远程内容源
-
-### 搜索过滤
-dart
-void _filterArticles(String query)
-复制
-- 实时搜索过滤
-- 多字段匹配（标题、作者、标签）
-- 搜索结果计数显示
-
 ## 自定义扩展
 
 ### 添加新的渲染组件
 在 `markdown_viewer.dart` 中扩展 builders：
-dart
+```dart
 builders: {
 'custom': CustomElementBuilder(),
 'latex': LatexElementBuilder(),
 }
+```
+
 ### 支持新的内容源
 1. 在 CSV 中添加新的标识列
 2. 在 `_loadArticleContent` 中实现内容加载逻辑
@@ -379,17 +288,10 @@ A: 确认 CSV 文件中的标签列格式正确
 - 文件加载状态
 - 错误信息跟踪
 
-## 技术栈
-
-- **Flutter** - 跨平台 UI 框架
-- **flutter_markdown** - Markdown 渲染核心
-- **CSV 解析** - 轻量级数据管理
-- **Dart 异步编程** - 高效的资源加载
-
 ## 贡献指南
 
 欢迎提交 Issue 和 Pull Request 来改进项目！
 
 ## 许可证
 
-CC BY NC SA 
+CC BY NC SA
