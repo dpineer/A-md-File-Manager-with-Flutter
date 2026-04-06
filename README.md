@@ -65,7 +65,7 @@ flutter pub get
 ```csv
 文章名称,作者,版本,文件路径,扩展URL,备注,标签
 示例文章,张三,1.0,assets/sample.md,,技术文档,flutter
-AI文章,李四,1.0,,https://api.dify.com,AI生成,ai
+AI文章,李四,1.0,,https://api.example.com,AI生成,ai
 ```
 
 4. **运行项目**
@@ -94,7 +94,7 @@ Flutter入门指南,王五,1.0,assets/flutter_intro.md,,技术文档,flutter
 
 #### Dify 知识库文章
 ```csv
-AI助手使用说明,AI助手,1.0,,https://api.dify.com/v1,AI生成,ai
+AI助手使用说明,AI助手,1.0,,https://api.example.com/v1,AI生成,ai
 ```
 
 ## 核心功能模块
