@@ -39,6 +39,19 @@ void main(List<String> arguments) async {
     print('写入启动日志失败: $e');
   }
 
+  // 辅助函数：将 file:// URI 转换为本地路径
+  String? _resolveFilePath(String raw) {
+    if (raw.startsWith('file://')) {
+      try {
+        final uri = Uri.parse(raw);
+        if (uri.scheme == 'file') {
+          return uri.toFilePath();
+        }
+      } catch (_) {}
+    }
+    return raw;
+  }
+
   // 解析命令行参数（针对Linux桌面环境容错处理）
   final parser = ArgParser()
     ..addOption('file', abbr: 'f', help: '要打开的Markdown文件路径');
@@ -49,11 +62,11 @@ void main(List<String> arguments) async {
 
     // 策略1: 匹配带有标识的选项参数 (如 -f /path/to/file.md)
     if (results.wasParsed('file')) {
-      filePath = results['file'] as String?;
+      filePath = _resolveFilePath(results['file'] as String);
     }
     // 策略2: 匹配匿名位置参数 (Linux文件管理器下执行"以...打开"的默认行为)
     else if (results.rest.isNotEmpty) {
-      filePath = results.rest.first;
+      filePath = _resolveFilePath(results.rest.first);
     }
 
     if (filePath != null && filePath.isNotEmpty) {
@@ -66,8 +79,10 @@ void main(List<String> arguments) async {
     // 终极容错：遍历寻找第一个像路径的参数
     String? fallbackPath;
     for (final arg in arguments) {
+      // 跳过选项名
+      if (arg == '--file' || arg == '-f') continue;
       if (!arg.startsWith('-')) {
-        fallbackPath = arg;
+        fallbackPath = _resolveFilePath(arg);
         break;
       }
     }

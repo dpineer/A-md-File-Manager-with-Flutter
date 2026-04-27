@@ -130,24 +130,26 @@ static gboolean my_application_local_command_line(GApplication* application, gch
   MyApplication* self = MY_APPLICATION(application);
   // Strip out the first argument as it is binary name.
   // Check if we have file arguments and handle them
-  if (*arguments && *(arguments + 1)) {
-    gchar** file_args = *arguments + 1;
-    // Process file arguments here - pass them to Flutter
+  if (*arguments != nullptr && (*arguments)[1] != nullptr) {
+    // The first argument after the program name is the file path
+    // from XFCE "Open With" (passed via %U in .desktop file as file:// URI)
+    const gchar* raw_arg = (*arguments)[1];
+    
     g_autoptr(GPtrArray) new_arguments = g_ptr_array_new_with_free_func(g_free);
-    // Add original arguments first
-    for (int i = 1; (*arguments)[i] != nullptr; i++) {
-      if (g_strcmp0((*arguments)[i], "%U") != 0) { // Skip %U placeholder
-        g_ptr_array_add(new_arguments, g_strdup((*arguments)[i]));
-      }
+    
+    // Convert file URI to local path if needed
+    gchar* local_path = g_filename_from_uri(raw_arg, NULL, NULL);
+    if (local_path != nullptr) {
+      // Pass as --file argument for Dart-side explicit parsing
+      g_ptr_array_add(new_arguments, g_strdup("--file"));
+      g_ptr_array_add(new_arguments, g_strdup(local_path));
+      g_free(local_path);
+    } else {
+      // Pass the raw argument directly (already a local path)
+      g_ptr_array_add(new_arguments, g_strdup("--file"));
+      g_ptr_array_add(new_arguments, g_strdup(raw_arg));
     }
-    // If there are file arguments, add them with --file flag
-    for (int i = 0; file_args[i] != nullptr; i++) {
-      if (g_str_has_suffix(file_args[i], ".md") || g_str_has_suffix(file_args[i], ".markdown")) {
-        g_ptr_array_add(new_arguments, g_strdup("--file"));
-        g_ptr_array_add(new_arguments, g_strdup(file_args[i]));
-        break; // Only handle the first markdown file
-      }
-    }
+    
     g_ptr_array_add(new_arguments, NULL);
     self->dart_entrypoint_arguments = (char**)g_ptr_array_free(new_arguments, FALSE);
   }
