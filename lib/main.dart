@@ -421,69 +421,178 @@ class _MainPageState extends State<MainPage> {
     });
   }
 
-  Map<String, String> _parseDifyConfigFromUrl(String extensionUrl) {
+  /// 解析AI后端配置，支持Dify和OpenAI兼容（如LM-Studio）两种格式
+  /// Dify格式: http://host/v1/chat-messages#app-xxxxx
+  /// OpenAI兼容格式: http://host:port/v1 (端点固定为 /chat/completions)
+  Map<String, String> _parseAIConfigFromUrl(String extensionUrl) {
     if (extensionUrl.isEmpty) return {};
     try {
       final uri = Uri.parse(extensionUrl);
-      final baseUrl = '${uri.scheme}://${uri.host}${uri.port != 80 ? ':${uri.port}' : ''}';
-      return {'baseUrl': baseUrl, 'endpoint': uri.path, 'apiKey': uri.fragment};
+      final baseUrl = '${uri.scheme}://${uri.host}${uri.port > 0 ? ':${uri.port}' : ''}';
+      
+      // 检测是否为Dify格式（含fragment #app-xxx 或路径含 chat-messages）
+      if (uri.fragment.startsWith('app-') || uri.path.contains('chat-messages')) {
+        return {
+          'baseUrl': baseUrl,
+          'endpoint': uri.path,
+          'apiKey': uri.fragment,
+          'provider': 'dify',
+        };
+      }
+      
+      // 默认为OpenAI兼容格式（LM-Studio）
+      return {
+        'baseUrl': extensionUrl.replaceAll(RegExp(r'/+$'), ''), // 去除尾部斜杠
+        'endpoint': '/chat/completions',
+        'apiKey': 'lm-studio',
+        'provider': 'openai',
+      };
     } catch (e) {
       return {};
     }
   }
 
-  Stream<String> _fetchDifyContentStream(String query) async* {
+  /// OpenAI兼容格式（LM-Studio）流式请求
+  Stream<String> _fetchLMStudioContentStream(String query) async* {
     try {
       final currentArticle = _articleList.firstWhere((a) => a['title'] == _currentArticleTitle, orElse: () => {});
-      final config = _parseDifyConfigFromUrl(currentArticle['extensionUrl'] ?? '');
-      if (config.isEmpty) throw Exception('无法从文章配置中获取Dify API设置，请检查CSV格式');
+      final config = _parseAIConfigFromUrl(currentArticle['extensionUrl'] ?? '');
+      if (config.isEmpty) throw Exception('无法从文章配置中获取AI API设置，请检查CSV格式');
 
-      final headers = {'Authorization': 'Bearer ${config['apiKey']}', 'Content-Type': 'application/json'};
-      final messages = _conversationHistory.reversed.take(6).toList().reversed.map((msg) {
-        return {'role': msg['role'] == 'user' ? 'user' : 'assistant', 'content': msg['content'].toString()};
-      }).toList();
-      messages.add({'role': 'user', 'content': query});
+      final provider = config['provider'] ?? 'openai';
+      
+      final headers = {
+        'Content-Type': 'application/json',
+        if (config['apiKey'] != null && config['apiKey']!.isNotEmpty && config['apiKey'] != 'lm-studio')
+          'Authorization': 'Bearer ${config['apiKey']}',
+      };
 
       final dio = Dio();
-      final response = await dio.post(
-        '${config['baseUrl']}${config['endpoint']}',
-        data: {'inputs': {}, 'query': query, 'response_mode': 'streaming', 'user': 'flutter_app_user', 'messages': messages, 'conversation_mode': _selectedConversationMode},
-        options: Options(headers: headers, responseType: ResponseType.stream),
-      );
 
-      if (response.statusCode == 200) {
-        final Stream<List<int>> stream = response.data.stream;
-        final buffer = StringBuffer();
+      if (provider == 'dify') {
+        // === Dify 后端 ===
+        final messages = _conversationHistory.reversed.take(6).toList().reversed.map((msg) {
+          return {'role': msg['role'] == 'user' ? 'user' : 'assistant', 'content': msg['content'].toString()};
+        }).toList();
+        messages.add({'role': 'user', 'content': query});
 
-        await for (final chunk in stream) {
-          buffer.write(utf8.decode(chunk, allowMalformed: true));
-          final lines = buffer.toString().split('\n');
-          buffer.clear();
-          if (lines.isNotEmpty && !buffer.toString().endsWith('\n')) {
-            buffer.write(lines.last);
-            lines.removeLast();
-          }
+        final response = await dio.post(
+          '${config['baseUrl']}${config['endpoint']}',
+          data: {
+            'inputs': {}, 'query': query, 'response_mode': 'streaming',
+            'user': 'flutter_app_user', 'messages': messages,
+            'conversation_mode': _selectedConversationMode,
+          },
+          options: Options(headers: headers, responseType: ResponseType.stream),
+        );
 
-          for (final line in lines) {
-            final trimmed = line.trim();
-            if (trimmed.startsWith('data: ')) {
-              final jsonStr = trimmed.substring(6);
-              if (jsonStr == '[DONE]') return;
-              if (jsonStr.isNotEmpty) {
-                try {
-                  final map = jsonDecode(jsonStr);
-                  if (map['answer'] != null && map['answer'].toString().isNotEmpty) {
-                    yield map['answer'];
-                  }
-                } catch (_) {}
+        if (response.statusCode == 200) {
+          final Stream<List<int>> stream = response.data.stream;
+          final buffer = StringBuffer();
+
+          await for (final chunk in stream) {
+            buffer.write(utf8.decode(chunk, allowMalformed: true));
+            final lines = buffer.toString().split('\n');
+            buffer.clear();
+            if (lines.isNotEmpty && !buffer.toString().endsWith('\n')) {
+              buffer.write(lines.last);
+              lines.removeLast();
+            }
+
+            for (final line in lines) {
+              final trimmed = line.trim();
+              if (trimmed.startsWith('data: ')) {
+                final jsonStr = trimmed.substring(6);
+                if (jsonStr == '[DONE]') return;
+                if (jsonStr.isNotEmpty) {
+                  try {
+                    final map = jsonDecode(jsonStr);
+                    if (map['answer'] != null && map['answer'].toString().isNotEmpty) {
+                      yield map['answer'];
+                    }
+                  } catch (_) {}
+                }
               }
             }
           }
         }
+      } else {
+        // === OpenAI兼容格式（LM-Studio） ===
+        final List<Map<String, String>> openaiMessages = [];
+        // 添加历史消息（最近6轮）
+        final history = _conversationHistory.reversed.take(6).toList().reversed;
+        for (final msg in history) {
+          openaiMessages.add({
+            'role': msg['role'] == 'user' ? 'user' : 'assistant',
+            'content': msg['content'].toString(),
+          });
+        }
+        // 添加当前查询
+        openaiMessages.add({'role': 'user', 'content': query});
+
+        final response = await dio.post(
+          '${config['baseUrl']}${config['endpoint']}',
+          data: {
+            'model': _selectedConversationMode == 'technical' ? 'technical-model' : 'default-model',
+            'messages': openaiMessages,
+            'stream': true,
+            'temperature': 0.7,
+            'max_tokens': 4096,
+          },
+          options: Options(
+            headers: headers,
+            responseType: ResponseType.stream,
+            receiveTimeout: const Duration(seconds: 120),
+          ),
+        );
+
+        if (response.statusCode == 200) {
+          final Stream<List<int>> stream = response.data.stream;
+          final decoder = utf8.decoder;
+          String leftover = '';
+
+          await for (final chunk in stream) {
+            final text = decoder.convert(chunk);
+            leftover += text;
+
+            while (leftover.contains('\n')) {
+              final newlineIndex = leftover.indexOf('\n');
+              final line = leftover.substring(0, newlineIndex).trim();
+              leftover = leftover.substring(newlineIndex + 1);
+
+              if (line.isEmpty) continue;
+
+              if (line.startsWith('data: ')) {
+                final jsonStr = line.substring(6).trim();
+                if (jsonStr == '[DONE]') return;
+                if (jsonStr.isNotEmpty) {
+                  try {
+                    final map = jsonDecode(jsonStr);
+                    final choices = map['choices'] as List?;
+                    if (choices != null && choices.isNotEmpty) {
+                      final delta = choices[0]['delta'] as Map?;
+                      if (delta != null && delta['content'] != null) {
+                        yield delta['content'].toString();
+                      }
+                    }
+                  } catch (_) {
+                    // 解析失败跳过
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          throw Exception('HTTP ${response.statusCode}: ${response.statusMessage}');
+        }
       }
     } catch (e) {
-      throw Exception('访问Dify后端失败: $e');
+      throw Exception('访问AI后端失败: $e');
     }
+  }
+  /// 转发到LM-Studio流式请求（供_sendMessageToAI调用的统一入口）
+  Stream<String> _fetchAIContentStream(String query) {
+    return _fetchLMStudioContentStream(query);
   }
 
   Future<void> _sendMessageToAI() async {
@@ -498,7 +607,7 @@ class _MainPageState extends State<MainPage> {
       });
 
       String fullResponse = '';
-      await for (final chunk in _fetchDifyContentStream(message)) {
+      await for (final chunk in _fetchLMStudioContentStream(message)) {
         setState(() {
           fullResponse += chunk;
           _conversationHistory.last['content'] = fullResponse;
@@ -657,6 +766,27 @@ class _MainPageState extends State<MainPage> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('选择文件时出错: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  void _openExternalFile() async {
+    try {
+      const XTypeGroup typeGroup = XTypeGroup(label: 'Markdown Files', extensions: ['md', 'txt', 'markdown']);
+      final XFile? file = await openFile(acceptedTypeGroups: [typeGroup]);
+      if (file != null) {
+        final String filePath = file.path;
+        final String fileName = file.name;
+        _logDebug('打开外部文件: $filePath');
+        String content = await file.readAsString();
+        setState(() {
+          _currentArticleTitle = fileName;
+          _currentArticleFilePath = filePath;
+          _markdownContent = content;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已打开: $fileName'), backgroundColor: Colors.blue));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('打开文件时出错: $e'), backgroundColor: Colors.red));
     }
   }
 
@@ -949,6 +1079,18 @@ class _MainPageState extends State<MainPage> {
                   ),
                 ),
                 SizedBox(height: 10),
+                GestureDetector(
+                  onTap: _openExternalFile,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.green),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Center(child: Row(mainAxisAlignment: MainAxisAlignment.center, children:[Icon(Icons.open_in_new, color: Colors.green, size: 18), SizedBox(width: 8), Text('打开外部文件', style: TextStyle(color: Colors.green))])),
+                  ),
+                ),
+                SizedBox(height: 8),
                 GestureDetector(
                   onTap: _showSettingsDialog,
                   child: Container(

@@ -128,31 +128,9 @@ static void my_application_activate(GApplication* application) {
 // Implements GApplication::local_command_line.
 static gboolean my_application_local_command_line(GApplication* application, gchar*** arguments, int* exit_status) {
   MyApplication* self = MY_APPLICATION(application);
-  // Strip out the first argument as it is binary name.
-  // Check if we have file arguments and handle them
-  if (*arguments != nullptr && (*arguments)[1] != nullptr) {
-    // The first argument after the program name is the file path
-    // from XFCE "Open With" (passed via %U in .desktop file as file:// URI)
-    const gchar* raw_arg = (*arguments)[1];
-    
-    g_autoptr(GPtrArray) new_arguments = g_ptr_array_new_with_free_func(g_free);
-    
-    // Convert file URI to local path if needed
-    gchar* local_path = g_filename_from_uri(raw_arg, NULL, NULL);
-    if (local_path != nullptr) {
-      // Pass as --file argument for Dart-side explicit parsing
-      g_ptr_array_add(new_arguments, g_strdup("--file"));
-      g_ptr_array_add(new_arguments, g_strdup(local_path));
-      g_free(local_path);
-    } else {
-      // Pass the raw argument directly (already a local path)
-      g_ptr_array_add(new_arguments, g_strdup("--file"));
-      g_ptr_array_add(new_arguments, g_strdup(raw_arg));
-    }
-    
-    g_ptr_array_add(new_arguments, NULL);
-    self->dart_entrypoint_arguments = (char**)g_ptr_array_free(new_arguments, FALSE);
-  }
+  // Pass all arguments after the binary name to Dart as-is.
+  // Dart-side handles --file, -f, file:// URI, and positional args.
+  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
 
   g_autoptr(GError) error = nullptr;
   if (!g_application_register(application, nullptr, &error)) {
